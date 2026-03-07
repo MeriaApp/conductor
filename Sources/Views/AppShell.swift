@@ -52,13 +52,15 @@ struct AppShell: View {
     @StateObject private var closeoutManager = SessionCloseoutManager()
     /// Per-window session tracking — NOT the shared singleton's activeSession
     @State private var windowSession: Session?
+    /// User-defined window label (shown in title bar + status bar)
+    @State private var windowLabel: String = ""
 
     var body: some View {
         ZStack(alignment: .bottom) {
             HSplitView {
                 // Main conversation
                 VStack(spacing: 0) {
-                    StatusBar()
+                    StatusBar(windowLabel: $windowLabel)
 
                     ZStack(alignment: .top) {
                         ConversationView(
@@ -784,8 +786,9 @@ struct AppShell: View {
         .buttonStyle(.plain)
     }
 
-    /// Dynamic window title — shows working directory so windows are distinguishable
+    /// Dynamic window title — shows custom label, working directory, or default
     private var windowTitle: String {
+        if !windowLabel.isEmpty { return windowLabel }
         guard let dir = process.workingDirectory else { return "Conductor" }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         if dir == home { return "Conductor" }

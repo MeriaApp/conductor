@@ -1,0 +1,95 @@
+====================================
+  CONDUCTOR - Setup Guide
+  Your AI-powered Mac assistant
+====================================
+
+Welcome! This guide will walk you through getting Conductor running on your Mac.
+The app has a built-in onboarding wizard, but here's what to expect.
+
+
+STEP 1: INSTALL THE APP
+------------------------
+1. Unzip Conductor-v1.0.0.zip (double-click it)
+2. Drag "Conductor.app" into your Applications folder
+3. CLEAR THE QUARANTINE FLAG (required — one-time step):
+   - Open Terminal (search "Terminal" in Spotlight, or find it in Applications > Utilities)
+   - Copy and paste this command, then press Enter:
+
+     xattr -cr /Applications/Conductor.app
+
+   - This removes the macOS quarantine flag so the app opens without warnings
+   - You only need to do this once
+
+4. Open Conductor from your Applications folder (double-click it)
+   - It should open cleanly with no warnings after step 3
+
+
+STEP 2: FOLLOW THE ONBOARDING WIZARD
+-------------------------------------
+When Conductor opens, you'll see a setup wizard. It walks you through everything:
+
+  a) NODE.JS CHECK
+     - Conductor needs Node.js (v18 or later) installed
+     - If you don't have it: https://nodejs.org (download the LTS version)
+     - Install it, then come back to Conductor
+
+  b) INSTALL CLAUDE CLI
+     - Click the install button in the wizard
+     - It will run: npm install -g @anthropic-ai/claude-code
+     - This installs Anthropic's Claude command-line tool
+
+  c) AUTHENTICATE
+     - The wizard will open Terminal for you to sign in
+     - Run: claude login
+     - Follow the prompts to connect your Anthropic account
+     - If you don't have one: https://console.anthropic.com (sign up free)
+
+  d) TEST IT
+     - The wizard sends a test message to make sure everything works
+     - If it responds, you're good to go!
+
+  e) KEYBOARD SHORTCUTS
+     - The final step shows you useful shortcuts
+     - You can always see these later in the app
+
+
+STEP 3: START USING CONDUCTOR
+-------------------------------
+Once setup is complete, just type in the message bar and hit Enter.
+Conductor connects to Claude — you can ask it to:
+  - Write and edit code
+  - Read and analyze files on your Mac
+  - Run terminal commands
+  - Help with any software task
+
+The app will ask for your permission before doing anything sensitive
+(reading files, running commands, etc).
+
+
+REQUIREMENTS
+------------
+- macOS 13 (Ventura) or later
+- Apple Silicon (M1/M2/M3/M4) or Intel Mac
+- Node.js v18+ (https://nodejs.org)
+- An Anthropic account (https://console.anthropic.com)
+
+
+TROUBLESHOOTING
+---------------
+"Apple could not verify" / "App can't be opened" / "unidentified developer"
+  -> Open Terminal and run:  xattr -cr /Applications/Conductor.app
+  -> Then open the app again — it will work
+
+"claude: command not found"
+  -> Make sure Node.js is installed, then run: npm install -g @anthropic-ai/claude-code
+
+"Authentication failed"
+  -> Open Terminal and run: claude login
+  -> Follow the prompts to sign in again
+
+Still stuck? Reach out to whoever sent you this app.
+
+
+====================================
+  Built with Claude by Jesse Meria
+====================================

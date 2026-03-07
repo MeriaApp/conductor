@@ -4,12 +4,17 @@ import AppKit
 /// Top status bar showing model, context %, cost, git branch, luminance
 /// Per UX_DESIGN.md: "One line. Every critical metric at a glance."
 struct StatusBar: View {
+    @Binding var windowLabel: String
+
     @EnvironmentObject private var process: ClaudeProcess
     @EnvironmentObject private var theme: ThemeEngine
     @EnvironmentObject private var sessionManager: SessionManager
     @EnvironmentObject private var contextManager: ContextStateManager
     @EnvironmentObject private var contextPipeline: ContextPreservationPipeline
     @EnvironmentObject private var modelRouter: ModelRouter
+
+    @State private var isEditingLabel = false
+    @State private var editingText = ""
 
     var body: some View {
         HStack(spacing: 16) {
@@ -104,6 +109,13 @@ struct StatusBar: View {
                     .frame(height: 12)
                     .opacity(0.3)
             }
+
+            // Window name (click to rename)
+            windowNameIndicator
+
+            Divider()
+                .frame(height: 12)
+                .opacity(0.3)
 
             // Model indicator
             modelIndicator
@@ -599,6 +611,59 @@ struct StatusBar: View {
             }
         }
         .help(suggestion.reason)
+    }
+
+    // MARK: - Window Name
+
+    private var windowNameIndicator: some View {
+        Group {
+            if isEditingLabel {
+                HStack(spacing: 4) {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 9))
+                        .foregroundColor(theme.sky)
+
+                    TextField("Name this window...", text: $editingText, onCommit: {
+                        windowLabel = editingText.trimmingCharacters(in: .whitespaces)
+                        isEditingLabel = false
+                    })
+                    .textFieldStyle(.plain)
+                    .font(Typography.statusBar)
+                    .foregroundColor(theme.bright)
+                    .frame(width: 150)
+                    .onExitCommand {
+                        isEditingLabel = false
+                    }
+                }
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(theme.sky.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 3))
+            } else {
+                Button {
+                    editingText = windowLabel
+                    isEditingLabel = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: windowLabel.isEmpty ? "tag" : "tag.fill")
+                            .font(.system(size: 9))
+                            .foregroundColor(windowLabel.isEmpty ? theme.muted : theme.sky)
+
+                        Text(windowLabel.isEmpty ? "Name" : windowLabel)
+                            .font(Typography.statusBar)
+                            .foregroundColor(windowLabel.isEmpty ? theme.muted : theme.bright)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(theme.elevated)
+                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Click to name this window")
+            }
+        }
     }
 
     // MARK: - Helpers
