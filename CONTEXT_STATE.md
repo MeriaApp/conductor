@@ -1,6 +1,6 @@
 # Context State — Conductor (Public Distribution Version)
 
-*Last updated: March 7, 2026 (Initial Setup Session)*
+*Last updated: March 7, 2026*
 
 ## What This Is
 
@@ -11,12 +11,49 @@ This is the **distributable version** of Conductor, forked from the original at 
 
 ---
 
-## Current State: v1.0.0 RELEASED
+## Current State: v1.0.0 RELEASED + Post-Release Improvements
 
 - GitHub release live at `https://github.com/MeriaApp/conductor/releases/tag/v1.0.0`
-- Signed zip on Desktop: `~/Desktop/Conductor-v1.0.0.zip` (2.6MB)
 - Signed with Developer ID Application cert (Jesse's)
-- NOT notarized yet — friend needs to right-click > Open first time
+- NOT notarized yet — users need to right-click > Open first time
+
+### Changes Since v1.0.0 (not yet released)
+
+**Bloat Removed (7 files deleted):**
+- MoodBoardEngine + MoodBoardView + MoodBoard model — design moodboard nobody used
+- EvolutionAgent — "self-improvement engine" that ran background timers for nothing
+- SharedIntelligence — cross-project knowledge registry, cool concept, zero practical value
+- FeatureDetector + FeatureMapOverlay — meta-UI about the app's own features
+- All references cleaned from AppShell, ConductorApp, SessionStateContainer, ProjectSwitcher
+
+**Features Added:**
+- Smart auto-scroll — locks to bottom during streaming, stays put when user scrolls up, magnets back when user scrolls to bottom. "Jump to bottom" button when scrolled up.
+- Up-arrow message history — press up/down to recall previous messages (like Terminal)
+- Input placeholder text — "Message Claude..." shown in normal mode (vibe mode shows "What do you want to build?")
+- macOS notification when Claude finishes in background — if app is unfocused, notification banner appears
+- Clipboard image paste (Cmd+V screenshots) — auto-converts TIFF to PNG
+- Image attachment strip — drag/drop images appear as thumbnails, not inline text
+- Dynamic input bar height — starts compact, grows with content, max 200px
+- Window naming — click tag icon in status bar to label windows
+- Smaller minimum window size (480x300, down from 700x500)
+- TemplateScaffolder — auto-scaffolds optimized ~/.claude/ (user-level) and .claude/ (project-level) with rules + skills
+  - User-level: CLAUDE.md + rules/coding-standards.md + rules/git-workflow.md (created on first run + onboarding)
+  - Project-level: CLAUDE.md, CONTEXT_STATE.md, rules/anti-patterns.md, rules/verification.md, skills/debug, skills/audit, skills/release (prompted when opening a new directory)
+  - Never overwrites existing files
+- Removed redundant Resources/Templates/ directory (content embedded in TemplateScaffolder.swift)
+- Updated CLAUDE.md to reflect actual file structure (removed 7 deleted file references)
+- Text selection — `.textSelection(.enabled)` moved to LazyVStack container level for cross-paragraph drag selection
+- Status bar cleanup — removed Cmd+K hint, "? for help", empty Name placeholder, removed dividers between right-side controls, tightened spacing (16→10), fixed model suggestion pill overflow (dropped reason text, lineLimit+fixedSize)
+- Terminal-style title bar — shows "folder — model — Conductor" instead of just "Conductor"
+- WelcomeView cleaned — removed Feature Map and Moodboard from feature grid (deleted features)
+- v1.1.0 build installed to /Applications/Conductor v1.1.app
+
+**Still on roadmap:**
+- App icon (still default Xcode globe)
+- Notarization (needs Apple ID app-specific password)
+- API key support (monetization path — users bring their own key)
+- Landing page
+- Sparkle auto-updates
 
 ---
 
@@ -24,35 +61,20 @@ This is the **distributable version** of Conductor, forked from the original at 
 
 ### 1. New 5-Step Guided Onboarding (`Sources/Views/OnboardingView.swift`)
 Complete rewrite of the 3-step onboarding into a 5-step guided wizard:
-- **Step 1: Welcome** — explains Conductor + shows live checklist (Node.js, CLI, Auth) with green checkmarks
-- **Step 2: Node.js Check** — auto-detects, shows version. If missing: links to nodejs.org + Homebrew instructions
-- **Step 3: Claude CLI Install** — "Install Now" button runs `npm install -g @anthropic-ai/claude-code`. Shows progress, handles errors
-- **Step 4: Authentication** — guides through `claude auth login` (opens Terminal) or API key setup. "Test Connection" runs real prompt
-- **Step 5: Shortcuts** — key shortcuts overview, "Get Started" button
-- Navigation blocks if requirements aren't met (can't skip past Node.js if missing)
-- "Skip setup" link for power users
+- **Step 1: Welcome** — explains Conductor + shows live checklist
+- **Step 2: Node.js Check** — auto-detects, shows version
+- **Step 3: Claude CLI Install** — "Install Now" button runs `npm install -g @anthropic-ai/claude-code`
+- **Step 4: Authentication** — guides through `claude auth login`
+- **Step 5: Shortcuts** — key shortcuts overview
 
 ### 2. System Action Confirmation Cards
-**IMPORTANT PATTERN:** Before ANY action that could trigger a macOS system dialog (password prompt, keychain access, network permission), the onboarding shows an explanation card with:
-- What command will run
-- Why it needs access
-- What the user will see
-- "Go Ahead" / "Cancel" buttons
-
-This was added because Jesse got a surprise keychain prompt during the build. The principle: **never surprise users with system dialogs — explain first, then let them confirm.**
-
-Three confirmation cards exist:
-- **CLI Install** — warns about potential password prompt for global npm install
-- **Open Terminal** — explains it will open Terminal and run `claude auth login`
-- **Test Connection** — explains it will send a test prompt and use API credits
+Before ANY action that triggers a macOS system dialog, onboarding shows an explanation card.
 
 ### 3. Default Permission Mode Changed
-- Original: `CLIPermissionMode.bypassPermissions` (auto-executes everything)
+- Original: `CLIPermissionMode.bypassPermissions`
 - Public: `CLIPermissionMode.default_` (asks before edits and commands)
-- Changed in `Sources/Services/ClaudeProcess.swift` line 65
 
 ### 4. Code Signing for Distribution
-- `project.yml`: DEVELOPMENT_TEAM cleared, CODE_SIGN_IDENTITY set to `-` (ad-hoc for dev builds)
 - Release builds use: `Developer ID Application: JESSE ROBERT MERIA (36D97ZTP6J)`
 - Release script handles signing automatically
 
@@ -63,7 +85,7 @@ Three confirmation cards exist:
 ### One-Command Release
 ```bash
 cd "/Users/jesse/Documents/meria-os/conductor-public"
-./scripts/release.sh 1.0.1 "What changed in this version"
+./scripts/release.sh 1.1.0 "What changed in this version"
 ```
 
 This does everything:
@@ -74,64 +96,59 @@ This does everything:
 5. Commits + pushes to GitHub
 6. Creates GitHub release with the zip attached
 
-**NOTE:** First build after restart may trigger keychain prompt for Developer ID cert. Enter Mac login password and click "Always Allow".
-
-### Manual Release Steps (if script fails)
-```bash
-cd "/Users/jesse/Documents/meria-os/conductor-public"
-xcodegen generate
-xcodebuild -scheme Conductor -destination 'platform=macOS' -configuration Release build \
-  DEVELOPMENT_TEAM=36D97ZTP6J \
-  CODE_SIGN_IDENTITY="Developer ID Application: JESSE ROBERT MERIA (36D97ZTP6J)" \
-  CODE_SIGN_STYLE=Manual \
-  ENABLE_HARDENED_RUNTIME=YES \
-  OTHER_CODE_SIGN_FLAGS="--options=runtime"
-
-# Find the built app
-APP=$(find ~/Library/Developer/Xcode/DerivedData -name "Conductor.app" -path "*/Conductor-*/Release/*" | head -1)
-ditto -c -k --keepParent "$APP" ~/Desktop/Conductor-vX.Y.Z.zip
-
-# Create release
-gh release create vX.Y.Z ~/Desktop/Conductor-vX.Y.Z.zip --title "Conductor vX.Y.Z" --notes "..."
-```
-
 ---
 
-## How Users Install
+## DISTRIBUTION PLAN — Path to Revenue
 
-1. Download `Conductor-v{VERSION}.zip` from GitHub releases
-2. Unzip, drag `Conductor.app` to `/Applications`
-3. Double-click to open — if macOS warns, right-click > Open once (not notarized yet)
-4. Onboarding wizard walks through: Node.js check → CLI install → Auth → Test → Shortcuts
-5. Start using Conductor
+### Phase 1: Polish & Stability (Current)
+- [x] Core UX improvements (auto-scroll, message history, paste images, etc.)
+- [x] Strip bloat features (7 files removed)
+- [ ] Notarization (removes Gatekeeper warning)
+- [ ] App icon design
+- [ ] Test with 2-3 friends, collect feedback
+- [ ] Fix any showstopper bugs
 
----
+### Phase 2: Direct API Support
+**Why:** Current approach requires users to install Node.js + Claude CLI + authenticate — too much friction. Direct API support means: paste API key, start using.
 
-## What's NOT Done Yet (Future Work)
+**Implementation:**
+- Add API key input in settings/onboarding (stored in Keychain)
+- Build direct Anthropic API client (streaming, tool use parsing)
+- Support BOTH: CLI backend (existing) and API backend (new)
+- User chooses on first run: "I have Claude CLI" vs "I have an API key"
+- Same UI, different backend
 
-### Notarization (removes Gatekeeper warning)
-Need to store notarytool credentials first:
-```bash
-xcrun notarytool store-credentials "AC_PASSWORD" --apple-id YOUR_APPLE_ID --team-id 36D97ZTP6J
-```
-Then add to release script: `xcrun notarytool submit ... --wait`
+**Economics:**
+- CLI users: pay Anthropic for Max subscription ($20/mo), Conductor is free or paid separately
+- API users: pay per token (Sonnet ~$1-2/session, Opus ~$5-8/session)
+- Jesse pays $0 for infrastructure either way
 
-### Sparkle Auto-Updates
-Add Sparkle framework so the app checks for updates automatically. Users wouldn't need to manually download new versions.
+### Phase 3: Monetization
+**Pricing model (Conductor itself):**
+- Free: full app, unlimited use, single window
+- Pro ($12-15/month): multi-agent orchestration, agent presets, performance dashboard, multi-window
+- Team ($25/month): shared agent configs, team presets (future)
 
-### Freemium Model
-- Free: full app, single window, no multi-agent
-- Pro ($39 or $12/mo): multi-agent, agent presets, build-verify pipeline, performance dashboard, shared intelligence
-- Payment via Gumroad or Lemonsqueezy
+**Payment:** Lemonsqueezy or Gumroad (simplest for indie)
+**License validation:** App checks license key on launch, stores in Keychain
 
-### Landing Page / Website
-- conductorapp.com or similar
-- Screenshots, features, download button
-- Could be a page on meria.agency
+### Phase 4: Distribution & Growth
+- Landing page (conductorapp.dev or similar)
+- Submit to Product Hunt
+- Post in Claude/AI developer communities (Reddit, Discord, Twitter)
+- YouTube walkthrough / demo video
+- Sparkle auto-update framework for seamless updates
 
-### App Icon
-- Currently using system icon placeholder
-- Need a proper icon in `Resources/Assets.xcassets/AppIcon.appiconset/`
+### Revenue Targets
+- 50 paying users at $12/mo = $600/mo
+- 200 paying users at $12/mo = $2,400/mo
+- 500 paying users at $15/mo = $7,500/mo
+
+**Why this could work:**
+- Conductor is genuinely the best way to use Claude CLI on macOS
+- No real competitor does: multi-agent, vibe mode, dashboard, sessions, context management, image paste, all in a native macOS app
+- Claude Code is exploding in popularity — wrapper market is wide open
+- Zero marginal cost (users bring their own API key/subscription)
 
 ---
 
@@ -141,22 +158,11 @@ Add Sparkle framework so the app checks for updates automatically. Users wouldn'
 - **Original:** `/Users/jesse/Documents/meria-os/claude-terminal/Conductor/` — Jesse's daily driver, DO NOT TOUCH
 - **Public:** `/Users/jesse/Documents/meria-os/conductor-public/` — this project, for distribution
 - These are separate git repos. Changes to one don't affect the other.
-- To port features FROM original TO public: manually copy the changed files and rebuild
-
-### Key Files Changed From Original
-| File | What Changed |
-|------|-------------|
-| `Sources/Views/OnboardingView.swift` | Complete rewrite — 5-step wizard with system action confirmations |
-| `Sources/Services/ClaudeProcess.swift` | Default permission mode: `bypassPermissions` → `default_` |
-| `project.yml` | Dev team cleared, ad-hoc signing for dev builds |
-| `CLAUDE.md` | Build commands updated for public project path |
-| `scripts/release.sh` | NEW — one-command build+sign+zip+push+release |
-| `.gitignore` | NEW — ignores releases/, *.xcodeproj, DerivedData/ |
 
 ### Signing Certificates Available
 ```
 Apple Development: JESSE ROBERT MERIA (6KQW73VUKS)
-Developer ID Application: JESSE ROBERT MERIA (36D97ZTP6J)  ← used for releases
+Developer ID Application: JESSE ROBERT MERIA (36D97ZTP6J)  <- used for releases
 Apple Distribution: JESSE ROBERT MERIA (36D97ZTP6J)
 ```
 
@@ -166,4 +172,5 @@ Apple Distribution: JESSE ROBERT MERIA (36D97ZTP6J)
 - **Compiles:** YES (BUILD SUCCEEDED)
 - **Signed:** YES (Developer ID Application)
 - **Released:** v1.0.0 on GitHub
+- **Post-release changes:** Built and verified, not yet released
 - **Notarized:** No (future work)

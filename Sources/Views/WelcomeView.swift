@@ -182,12 +182,9 @@ struct WelcomeView: View {
             ], spacing: 8) {
                 featurePill("gauge.with.dots.needle.67percent", "Dashboard", "Tab")
                 featurePill("person.3.fill", "Multi-Agent", "Cmd+K")
-                featurePill("hammer.fill", "Build & Verify", "Cmd+K")
-                featurePill("chart.bar.fill", "Performance", "Cmd+Shift+P")
                 featurePill("diamond.fill", "Context Mgr", "Cmd+Shift+X")
-                featurePill("map.fill", "Feature Map", "Cmd+Shift+F")
+                featurePill("chart.bar.fill", "Performance", "Cmd+Shift+P")
                 featurePill("sparkles", "Vibe Coder", "Ctrl+V")
-                featurePill("photo.on.rectangle", "Moodboard", "Tab")
                 featurePill("sun.min", "Luminance", "Cmd+] [")
             }
         }

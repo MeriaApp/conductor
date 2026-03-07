@@ -6,7 +6,6 @@ struct ProjectSwitcher: View {
     @EnvironmentObject private var process: ClaudeProcess
     @EnvironmentObject private var theme: ThemeEngine
     @EnvironmentObject private var sessionManager: SessionManager
-    @EnvironmentObject private var featureDetector: FeatureDetector
     @EnvironmentObject private var projectManager: ProjectManager
     @Binding var isPresented: Bool
 
@@ -186,11 +185,6 @@ struct ProjectSwitcher: View {
 
         // Detect git branch
         detectGitBranch(in: path)
-
-        // Feature detection
-        Task {
-            await featureDetector.scan(directory: path)
-        }
 
         isPresented = false
     }

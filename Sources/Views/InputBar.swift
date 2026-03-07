@@ -10,9 +10,20 @@ struct InputBar: View {
     @State private var isDragOver = false
     @FocusState private var isFocused: Bool
 
+    // Dynamic text height (starts compact, grows with content)
+    @State private var textContentHeight: CGFloat = 22
+
+    // Image/file attachments
+    @State private var attachedImages: [URL] = []
+
     // Slash autocomplete state
     @State private var slashMatches: [SlashSuggestion] = []
     @State private var selectedSlashIndex = 0
+
+    // Message history (up/down arrow recall)
+    @State private var messageHistory: [String] = []
+    @State private var historyIndex: Int = -1
+    @State private var savedCurrentInput: String = ""
 
     /// Callbacks for shortcuts strip actions
     var onCommandPalette: (() -> Void)?
@@ -50,87 +61,146 @@ struct InputBar: View {
                     .zIndex(10)
                 }
 
-                HStack(alignment: .bottom, spacing: 12) {
-                    // Prompt character (hidden in vibe mode — placeholder replaces it)
-                    if !process.isVibeCoder {
-                        Text("\u{25B8}")
-                            .font(Typography.input)
-                            .foregroundColor(theme.sky)
-                            .padding(.bottom, 6)
-                    }
-
-                    // Input field with vibe mode placeholder
-                    ZStack(alignment: .leading) {
-                        if process.isVibeCoder && inputText.isEmpty {
-                            Text("What do you want to build?")
-                                .font(Typography.input)
-                                .foregroundColor(theme.muted.opacity(0.6))
-                                .padding(.leading, 2)
-                                .padding(.bottom, 6)
-                                .allowsHitTesting(false)
-                        }
-
-                        InputTextEditor(
-                            text: $inputText,
-                            textColor: ColorPalette.primary.withLightness(
-                                ColorPalette.primary.lightness + ((1.0 - 2 * ColorPalette.primary.lightness + 0.05) * theme.luminance)
-                            ).nsColor,
-                            onSubmit: sendMessage,
-                            onTextChange: { newText in
-                                updateSlashSuggestions(for: newText)
-                            },
-                            onArrowUp: {
-                                guard !slashMatches.isEmpty else { return false }
-                                selectedSlashIndex = max(0, selectedSlashIndex - 1)
-                                return true
-                            },
-                            onArrowDown: {
-                                guard !slashMatches.isEmpty else { return false }
-                                selectedSlashIndex = min(slashMatches.count - 1, selectedSlashIndex + 1)
-                                return true
-                            },
-                            onTab: {
-                                guard !slashMatches.isEmpty,
-                                      selectedSlashIndex < slashMatches.count else { return false }
-                                insertSlashSuggestion(slashMatches[selectedSlashIndex])
-                                return true
-                            },
-                            onEscape: {
-                                guard !slashMatches.isEmpty else { return false }
-                                slashMatches = []
-                                return true
+                VStack(spacing: 0) {
+                    // Attached images strip
+                    if !attachedImages.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(attachedImages, id: \.absoluteString) { url in
+                                    AttachmentThumbnail(url: url, theme: theme) {
+                                        withAnimation(.easeOut(duration: 0.15)) {
+                                            attachedImages.removeAll { $0 == url }
+                                        }
+                                    }
+                                }
                             }
-                        )
-                        .font(Typography.input)
-                        .foregroundColor(theme.primary)
-                        .focused($isFocused)
-                        .frame(minHeight: 20, maxHeight: 200)
-                    } // End ZStack
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 6)
+                        }
+                        .background(theme.elevated.opacity(0.5))
 
-                    // Send button (visible when there's text)
-                    if !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Button(action: sendMessage) {
-                            Image(systemName: "arrow.up.circle.fill")
-                                .font(.system(size: 20))
+                        Rectangle()
+                            .fill(theme.separator.opacity(0.2))
+                            .frame(height: 1)
+                    }
+
+                    HStack(alignment: .bottom, spacing: 12) {
+                        // Prompt character (hidden in vibe mode — placeholder replaces it)
+                        if !process.isVibeCoder {
+                            Text("\u{25B8}")
+                                .font(Typography.input)
                                 .foregroundColor(theme.sky)
+                                .padding(.bottom, 4)
                         }
-                        .buttonStyle(.plain)
-                        .padding(.bottom, 4)
-                    }
 
-                    // Interrupt button (visible when streaming)
-                    if process.isStreaming {
-                        Button(action: { process.interrupt() }) {
-                            Image(systemName: "stop.circle.fill")
-                                .font(.system(size: 20))
-                                .foregroundColor(theme.rose)
+                        // Input field with vibe mode placeholder
+                        ZStack(alignment: .leading) {
+                            if inputText.isEmpty {
+                                Text(process.isVibeCoder ? "What do you want to build?" : "Message Claude...")
+                                    .font(Typography.input)
+                                    .foregroundColor(theme.muted.opacity(0.6))
+                                    .padding(.leading, 2)
+                                    .padding(.bottom, 4)
+                                    .allowsHitTesting(false)
+                            }
+
+                            InputTextEditor(
+                                text: $inputText,
+                                textColor: ColorPalette.primary.withLightness(
+                                    ColorPalette.primary.lightness + ((1.0 - 2 * ColorPalette.primary.lightness + 0.05) * theme.luminance)
+                                ).nsColor,
+                                onSubmit: sendMessage,
+                                onTextChange: { newText in
+                                    updateSlashSuggestions(for: newText)
+                                },
+                                onHeightChange: { height in
+                                    textContentHeight = height
+                                },
+                                onImagePaste: { urls in
+                                    withAnimation(.easeOut(duration: 0.15)) {
+                                        for url in urls where !attachedImages.contains(url) {
+                                            attachedImages.append(url)
+                                        }
+                                    }
+                                },
+                                onArrowUp: {
+                                    // Slash autocomplete takes priority
+                                    if !slashMatches.isEmpty {
+                                        selectedSlashIndex = max(0, selectedSlashIndex - 1)
+                                        return true
+                                    }
+                                    // Message history recall
+                                    guard !messageHistory.isEmpty else { return false }
+                                    if historyIndex == -1 {
+                                        savedCurrentInput = inputText
+                                        historyIndex = messageHistory.count - 1
+                                    } else if historyIndex > 0 {
+                                        historyIndex -= 1
+                                    } else {
+                                        return true
+                                    }
+                                    inputText = messageHistory[historyIndex]
+                                    return true
+                                },
+                                onArrowDown: {
+                                    if !slashMatches.isEmpty {
+                                        selectedSlashIndex = min(slashMatches.count - 1, selectedSlashIndex + 1)
+                                        return true
+                                    }
+                                    // Navigate forward through history
+                                    guard historyIndex >= 0 else { return false }
+                                    if historyIndex < messageHistory.count - 1 {
+                                        historyIndex += 1
+                                        inputText = messageHistory[historyIndex]
+                                    } else {
+                                        historyIndex = -1
+                                        inputText = savedCurrentInput
+                                    }
+                                    return true
+                                },
+                                onTab: {
+                                    guard !slashMatches.isEmpty,
+                                          selectedSlashIndex < slashMatches.count else { return false }
+                                    insertSlashSuggestion(slashMatches[selectedSlashIndex])
+                                    return true
+                                },
+                                onEscape: {
+                                    guard !slashMatches.isEmpty else { return false }
+                                    slashMatches = []
+                                    return true
+                                }
+                            )
+                            .font(Typography.input)
+                            .foregroundColor(theme.primary)
+                            .focused($isFocused)
+                            .frame(height: min(max(textContentHeight, 22), 200))
+                        } // End ZStack
+
+                        // Send button (visible when there's text or attachments)
+                        if !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachedImages.isEmpty {
+                            Button(action: sendMessage) {
+                                Image(systemName: "arrow.up.circle.fill")
+                                    .font(.system(size: 20))
+                                    .foregroundColor(theme.sky)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.bottom, 2)
                         }
-                        .buttonStyle(.plain)
-                        .padding(.bottom, 4)
+
+                        // Interrupt button (visible when streaming)
+                        if process.isStreaming {
+                            Button(action: { process.interrupt() }) {
+                                Image(systemName: "stop.circle.fill")
+                                    .font(.system(size: 20))
+                                    .foregroundColor(theme.rose)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.bottom, 2)
+                        }
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
                 .background(isDragOver ? theme.sky.opacity(0.08) : theme.inputBackground)
                 .overlay(
                     isDragOver
@@ -148,9 +218,29 @@ struct InputBar: View {
 
     private func sendMessage() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty || !attachedImages.isEmpty else { return }
         slashMatches = []
-        process.send(text)
+
+        // Build message with image attachments
+        var message = text
+        if !attachedImages.isEmpty {
+            let refs = attachedImages.map { "@\($0.path)" }.joined(separator: "\n")
+            if message.isEmpty {
+                message = refs
+            } else {
+                message = "\(refs)\n\n\(message)"
+            }
+            attachedImages.removeAll()
+        }
+
+        // Save to history for up-arrow recall
+        if !text.isEmpty {
+            messageHistory.append(text)
+        }
+        historyIndex = -1
+        savedCurrentInput = ""
+
+        process.send(message)
         inputText = ""
     }
 
@@ -229,7 +319,9 @@ struct InputBar: View {
         slashMatches = []
     }
 
-    /// Handle dropped file URLs — insert as @/path/to/file references
+    private static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "bmp", "svg"]
+
+    /// Handle dropped file URLs — images go to attachment strip, other files inline as @/path
     private func handleFileDrop(_ providers: [NSItemProvider]) -> Bool {
         var handled = false
         for provider in providers {
@@ -238,12 +330,20 @@ struct InputBar: View {
                 provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
                     guard let data = item as? Data,
                           let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
-                    let path = url.path
+                    let ext = url.pathExtension.lowercased()
                     Task { @MainActor in
-                        if !inputText.isEmpty && !inputText.hasSuffix("\n") {
-                            inputText += "\n"
+                        if Self.imageExtensions.contains(ext) {
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                if !attachedImages.contains(url) {
+                                    attachedImages.append(url)
+                                }
+                            }
+                        } else {
+                            if !inputText.isEmpty && !inputText.hasSuffix("\n") {
+                                inputText += "\n"
+                            }
+                            inputText += "@\(url.path)"
                         }
-                        inputText += "@\(path)"
                     }
                 }
             }
@@ -335,27 +435,36 @@ struct InputTextEditor: NSViewRepresentable {
     var textColor: NSColor
     var onSubmit: () -> Void
     var onTextChange: ((String) -> Void)?
+    var onHeightChange: ((CGFloat) -> Void)?
+    var onImagePaste: (([URL]) -> Void)?
     var onArrowUp: (() -> Bool)?
     var onArrowDown: (() -> Bool)?
     var onTab: (() -> Bool)?
     var onEscape: (() -> Bool)?
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSTextView.scrollableTextView()
+        let scrollView = PasteAwareTextView.scrollableTextView()
         let textView = scrollView.documentView as! NSTextView
 
-        textView.delegate = context.coordinator
-        textView.isRichText = false
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.isAutomaticSpellingCorrectionEnabled = false
-        textView.allowsUndo = true
-        textView.drawsBackground = false
-        textView.textContainerInset = NSSize(width: 0, height: 2)
-        textView.font = Typography.inputNS
-        textView.textColor = textColor
-        textView.insertionPointColor = textColor
+        // Replace with our paste-aware subclass
+        let pasteTV = PasteAwareTextView(frame: textView.frame, textContainer: textView.textContainer)
+        pasteTV.onImagePaste = { urls in
+            context.coordinator.onImagePaste?(urls)
+        }
+        scrollView.documentView = pasteTV
+
+        pasteTV.delegate = context.coordinator
+        pasteTV.isRichText = false
+        pasteTV.isAutomaticQuoteSubstitutionEnabled = false
+        pasteTV.isAutomaticDashSubstitutionEnabled = false
+        pasteTV.isAutomaticTextReplacementEnabled = false
+        pasteTV.isAutomaticSpellingCorrectionEnabled = false
+        pasteTV.allowsUndo = true
+        pasteTV.drawsBackground = false
+        pasteTV.textContainerInset = NSSize(width: 0, height: 2)
+        pasteTV.font = Typography.inputNS
+        pasteTV.textColor = textColor
+        pasteTV.insertionPointColor = textColor
 
         // Make the scroll view transparent
         scrollView.drawsBackground = false
@@ -370,6 +479,8 @@ struct InputTextEditor: NSViewRepresentable {
         let textView = scrollView.documentView as! NSTextView
         if textView.string != text {
             textView.string = text
+            // Recalculate height when text is cleared
+            context.coordinator.recalcHeight(textView: textView)
         }
         // Update text color and font when theme/scale changes
         textView.textColor = textColor
@@ -378,10 +489,19 @@ struct InputTextEditor: NSViewRepresentable {
 
         // Update coordinator callbacks
         context.coordinator.onTextChange = onTextChange
+        context.coordinator.onHeightChange = onHeightChange
+        context.coordinator.onImagePaste = onImagePaste
         context.coordinator.onArrowUp = onArrowUp
         context.coordinator.onArrowDown = onArrowDown
         context.coordinator.onTab = onTab
         context.coordinator.onEscape = onEscape
+
+        // Keep paste-aware text view's callback in sync
+        if let pasteTV = textView as? PasteAwareTextView {
+            pasteTV.onImagePaste = { urls in
+                context.coordinator.onImagePaste?(urls)
+            }
+        }
 
         // Make NSTextView first responder on first update (SwiftUI .focused() doesn't work with NSViewRepresentable)
         if !context.coordinator.hasFocused, let window = textView.window {
@@ -398,6 +518,8 @@ struct InputTextEditor: NSViewRepresentable {
         @Binding var text: String
         var onSubmit: () -> Void
         var onTextChange: ((String) -> Void)?
+        var onHeightChange: ((CGFloat) -> Void)?
+        var onImagePaste: (([URL]) -> Void)?
         var onArrowUp: (() -> Bool)?
         var onArrowDown: (() -> Bool)?
         var onTab: (() -> Bool)?
@@ -409,10 +531,20 @@ struct InputTextEditor: NSViewRepresentable {
             self.onSubmit = onSubmit
         }
 
+        func recalcHeight(textView: NSTextView) {
+            guard let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer else { return }
+            layoutManager.ensureLayout(for: textContainer)
+            let usedRect = layoutManager.usedRect(for: textContainer)
+            let height = usedRect.height + 4 // small padding
+            onHeightChange?(height)
+        }
+
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             text = textView.string
             onTextChange?(textView.string)
+            recalcHeight(textView: textView)
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -453,6 +585,134 @@ struct InputTextEditor: NSViewRepresentable {
             }
             return false
         }
+    }
+}
+
+// MARK: - Paste-Aware Text View
+
+/// NSTextView subclass that intercepts Cmd+V to detect pasted images
+class PasteAwareTextView: NSTextView {
+    var onImagePaste: (([URL]) -> Void)?
+
+    private static let imageTypes: [NSPasteboard.PasteboardType] = [
+        .tiff, .png,
+        NSPasteboard.PasteboardType("public.jpeg"),
+        NSPasteboard.PasteboardType("public.heic"),
+    ]
+
+    override func paste(_ sender: Any?) {
+        let pb = NSPasteboard.general
+
+        // Check for image data on pasteboard (screenshots, copied images)
+        let hasImage = Self.imageTypes.contains { pb.data(forType: $0) != nil }
+
+        if hasImage {
+            // Save image to temp file and pass URL to attachment strip
+            if let saved = saveClipboardImage(from: pb) {
+                onImagePaste?([saved])
+                return
+            }
+        }
+
+        // Check for file URLs that are images
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
+            let imageExts: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "bmp", "svg"]
+            let imageURLs = urls.filter { imageExts.contains($0.pathExtension.lowercased()) }
+            if !imageURLs.isEmpty {
+                onImagePaste?(imageURLs)
+                // Also paste any non-image URLs as text
+                let nonImages = urls.filter { !imageExts.contains($0.pathExtension.lowercased()) }
+                if !nonImages.isEmpty {
+                    let paths = nonImages.map { "@\($0.path)" }.joined(separator: "\n")
+                    insertText(paths, replacementRange: selectedRange())
+                }
+                return
+            }
+        }
+
+        // Default paste behavior for text
+        super.paste(sender)
+    }
+
+    private func saveClipboardImage(from pb: NSPasteboard) -> URL? {
+        // Try to get image data in order of preference
+        let typeOrder: [(NSPasteboard.PasteboardType, String)] = [
+            (.png, "png"),
+            (NSPasteboard.PasteboardType("public.jpeg"), "jpg"),
+            (.tiff, "png"), // Convert TIFF to PNG (screenshots are TIFF)
+            (NSPasteboard.PasteboardType("public.heic"), "heic"),
+        ]
+
+        for (type, ext) in typeOrder {
+            if let data = pb.data(forType: type) {
+                let fileName = "clipboard-\(Int(Date().timeIntervalSince1970))-\(Int.random(in: 1000...9999)).\(ext)"
+                let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+
+                // For TIFF, convert to PNG
+                if type == .tiff {
+                    if let image = NSImage(data: data),
+                       let tiffData = image.tiffRepresentation,
+                       let bitmap = NSBitmapImageRep(data: tiffData),
+                       let pngData = bitmap.representation(using: .png, properties: [:]) {
+                        try? pngData.write(to: tempURL)
+                        return tempURL
+                    }
+                } else {
+                    try? data.write(to: tempURL)
+                    return tempURL
+                }
+            }
+        }
+        return nil
+    }
+}
+
+// MARK: - Attachment Thumbnail
+
+struct AttachmentThumbnail: View {
+    let url: URL
+    let theme: ThemeEngine
+    let onRemove: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            if let nsImage = NSImage(contentsOf: url) {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 56, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(theme.separator.opacity(0.3), lineWidth: 1)
+                    )
+            } else {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(theme.elevated)
+                    .frame(width: 56, height: 56)
+                    .overlay(
+                        VStack(spacing: 2) {
+                            Image(systemName: "photo")
+                                .font(.system(size: 16))
+                                .foregroundColor(theme.muted)
+                            Text(url.pathExtension.uppercased())
+                                .font(.system(size: 8, weight: .medium))
+                                .foregroundColor(theme.muted)
+                        }
+                    )
+            }
+
+            // Remove button
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundColor(theme.muted)
+                    .background(Circle().fill(theme.base).padding(2))
+            }
+            .buttonStyle(.plain)
+            .offset(x: 4, y: -4)
+        }
+        .help(url.lastPathComponent)
     }
 }
 

@@ -17,7 +17,7 @@ struct StatusBar: View {
     @State private var editingText = ""
 
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 10) {
             if process.isVibeCoder {
                 // Vibe Coder Mode: simplified — "Claude Code · health · cost"
                 vibeCoderStatusBar
@@ -110,12 +110,14 @@ struct StatusBar: View {
                     .opacity(0.3)
             }
 
-            // Window name (click to rename)
-            windowNameIndicator
+            // Window name (only show when set or editing)
+            if !windowLabel.isEmpty || isEditingLabel {
+                windowNameIndicator
 
-            Divider()
-                .frame(height: 12)
-                .opacity(0.3)
+                Divider()
+                    .frame(height: 12)
+                    .opacity(0.3)
+            }
 
             // Model indicator
             modelIndicator
@@ -198,33 +200,11 @@ struct StatusBar: View {
             // Effort level picker
             effortPicker
 
-            Divider()
-                .frame(height: 12)
-                .opacity(0.3)
-
             // Permission mode indicator
             permissionIndicator
 
-            Divider()
-                .frame(height: 12)
-                .opacity(0.3)
-
-            // Cmd+K hint
-            Text("Cmd+K")
-                .font(Typography.statusBarSecondary)
-                .foregroundColor(theme.muted)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 1)
-                .background(theme.elevated)
-                .clipShape(RoundedRectangle(cornerRadius: 3))
-
             // Luminance control
             luminanceControl
-
-            // Help hint
-            Text("? for help")
-                .font(Typography.statusBarSecondary)
-                .foregroundColor(theme.muted)
         }
     }
 
@@ -582,23 +562,20 @@ struct StatusBar: View {
 
     private func modelSuggestionPill(_ suggestion: ModelSuggestion) -> some View {
         Button {
-            // Accept suggestion
             process.selectedModel = suggestion.model
             modelRouter.dismissSuggestion()
         } label: {
-            HStack(spacing: 4) {
-                Text("→")
-                    .font(.system(size: 10, weight: .medium))
-                Text(suggestion.model.displayName)
+            HStack(spacing: 3) {
+                Text("→ \(suggestion.model.displayName)")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
-                Text("(\(suggestion.reason.components(separatedBy: "—").last?.trimmingCharacters(in: .whitespaces) ?? suggestion.reason))")
-                    .font(.system(size: 9, design: .monospaced))
             }
             .foregroundColor(theme.sky)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(theme.sky.opacity(0.1))
             .clipShape(RoundedRectangle(cornerRadius: 4))
+            .lineLimit(1)
+            .fixedSize()
         }
         .buttonStyle(.plain)
         .contextMenu {

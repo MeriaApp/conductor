@@ -80,6 +80,7 @@ struct OnboardingView: View {
                             .disabled(!canAdvance)
                     } else {
                         Button("Get Started") {
+                            TemplateScaffolder.shared.scaffoldUserLevel()
                             hasCompletedOnboarding = true
                         }
                         .buttonStyle(.plain)
@@ -105,6 +106,7 @@ struct OnboardingView: View {
 
             // Skip button — only for users who know what they're doing
             Button("Skip setup (I already have Claude CLI)") {
+                TemplateScaffolder.shared.scaffoldUserLevel()
                 hasCompletedOnboarding = true
             }
             .buttonStyle(.plain)

@@ -4,7 +4,7 @@ import Foundation
 /// Each WindowGroup window gets its own container — enabling independent Claude CLI sessions,
 /// token tracking, compaction, context state, and agents per window.
 ///
-/// Global services (ThemeEngine, SoundManager, SharedIntelligence, etc.) remain singletons.
+/// Global services (ThemeEngine, SoundManager, etc.) remain singletons.
 @MainActor
 final class SessionStateContainer: ObservableObject {
     let process = ClaudeProcess()
@@ -13,7 +13,6 @@ final class SessionStateContainer: ObservableObject {
     let contextPipeline: ContextPreservationPipeline
     let budgetOptimizer: ContextBudgetOptimizer
     let sessionContinuity = SessionContinuity()
-    let moodBoard = MoodBoardEngine()
     let orchestrator: AgentOrchestrator
     let messageBus = AgentMessageBus()
     let permissionManager = PermissionManager()

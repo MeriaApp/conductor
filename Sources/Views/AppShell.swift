@@ -9,13 +9,10 @@ struct AppShell: View {
     @EnvironmentObject private var sessionManager: SessionManager
     @EnvironmentObject private var orchestrator: AgentOrchestrator
     @EnvironmentObject private var permissionManager: PermissionManager
-    @EnvironmentObject private var moodBoard: MoodBoardEngine
     @EnvironmentObject private var contextManager: ContextStateManager
     @EnvironmentObject private var compactionEngine: CompactionEngine
     @EnvironmentObject private var budgetOptimizer: ContextBudgetOptimizer
     @EnvironmentObject private var sessionContinuity: SessionContinuity
-    @EnvironmentObject private var evolutionAgent: EvolutionAgent
-    @EnvironmentObject private var featureDetector: FeatureDetector
     @EnvironmentObject private var contextPipeline: ContextPreservationPipeline
     @EnvironmentObject private var fontScale: FontScale
     @EnvironmentObject private var modelRouter: ModelRouter
@@ -23,9 +20,7 @@ struct AppShell: View {
     @Environment(\.openWindow) private var openWindow
 
     @State private var showAgentPanel = false
-    @State private var showMoodBoard = false
     @State private var showDashboard = false
-    @State private var showFeatureMap = false
     @State private var showContextOverlay = false
     @State private var showCommandPalette = false
     @State private var showSessionBrowser = false
@@ -54,6 +49,9 @@ struct AppShell: View {
     @State private var windowSession: Session?
     /// User-defined window label (shown in title bar + status bar)
     @State private var windowLabel: String = ""
+    /// Scaffold prompt for new project directories
+    @State private var showScaffoldPrompt = false
+    @State private var pendingScaffoldURL: URL?
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -77,7 +75,6 @@ struct AppShell: View {
                                 withAnimation(.easeInOut(duration: 0.2)) {
                                     showDashboard = true
                                     showAgentPanel = false
-                                    showMoodBoard = false
                                 }
                             },
                             onDeploy: {
@@ -125,24 +122,17 @@ struct AppShell: View {
                 }
 
                 // Right sidebar (dashboard, agents, or moodboard)
-                if showDashboard || showAgentPanel || showMoodBoard {
+                if showDashboard || showAgentPanel {
                     VStack(spacing: 0) {
                         // Sidebar tab picker
                         HStack(spacing: 0) {
                             sidebarTab("Dashboard", icon: "gauge.with.dots.needle.67percent", isActive: showDashboard) {
                                 showDashboard = true
                                 showAgentPanel = false
-                                showMoodBoard = false
                             }
                             sidebarTab("Agents", icon: "person.3.fill", isActive: showAgentPanel) {
                                 showAgentPanel = true
                                 showDashboard = false
-                                showMoodBoard = false
-                            }
-                            sidebarTab("Moodboard", icon: "photo.on.rectangle.angled", isActive: showMoodBoard) {
-                                showMoodBoard = true
-                                showDashboard = false
-                                showAgentPanel = false
                             }
                         }
                         .padding(.horizontal, 8)
@@ -158,8 +148,6 @@ struct AppShell: View {
                             })
                         } else if showAgentPanel {
                             AgentPanel()
-                        } else if showMoodBoard {
-                            MoodBoardView()
                         }
                     }
                     .frame(minWidth: 280, idealWidth: 320, maxWidth: 400)
@@ -454,10 +442,20 @@ struct AppShell: View {
         }
         .navigationTitle(windowTitle)
         .onAppear {
+            TemplateScaffolder.shared.scaffoldUserLevel()
             startNewSession()
-            evolutionAgent.startMonitoring()
             NotificationService.shared.requestPermission()
             runHealthCheck()
+        }
+        .alert("Set Up Claude Instructions?", isPresented: $showScaffoldPrompt) {
+            Button("Set Up") {
+                if let url = pendingScaffoldURL {
+                    TemplateScaffolder.shared.scaffoldProject(at: url)
+                }
+            }
+            Button("Skip", role: .cancel) {}
+        } message: {
+            Text("Conductor can create optimized .claude/ rules and skills for this project. This won't overwrite any existing files.")
         }
         // Luminance (Cmd+[ / Cmd+])
         .onKeyPress(characters: CharacterSet(charactersIn: "["), phases: .down) { press in
@@ -495,10 +493,6 @@ struct AppShell: View {
         }
         // Search (Cmd+F)
         .onKeyPress(characters: CharacterSet(charactersIn: "f"), phases: .down) { press in
-            if press.modifiers.contains([.command, .shift]) {
-                showFeatureMap.toggle()
-                return .handled
-            }
             if press.modifiers.contains(.command) && !press.modifiers.contains(.shift) {
                 withAnimation(.easeOut(duration: 0.15)) {
                     showSearchBar.toggle()
@@ -683,9 +677,6 @@ struct AppShell: View {
             return .handled
         }
         // Overlay sheets
-        .sheet(isPresented: $showFeatureMap) {
-            FeatureMapOverlay()
-        }
         .sheet(isPresented: $showContextOverlay) {
             ContextOverlay()
         }
@@ -786,14 +777,23 @@ struct AppShell: View {
         .buttonStyle(.plain)
     }
 
-    /// Dynamic window title — shows custom label, working directory, or default
+    /// Dynamic window title — Terminal-style: "folder — model — Conductor"
     private var windowTitle: String {
         if !windowLabel.isEmpty { return windowLabel }
         guard let dir = process.workingDirectory else { return "Conductor" }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         if dir == home { return "Conductor" }
-        // Show last path component (project name)
-        return URL(fileURLWithPath: dir).lastPathComponent
+        let folder = URL(fileURLWithPath: dir).lastPathComponent
+        let model = process.selectedModel?.displayName ?? formatModelForTitle(process.currentModel)
+        return "\(folder) — \(model) — Conductor"
+    }
+
+    private func formatModelForTitle(_ model: String) -> String {
+        if model.contains("opus") { return "Opus" }
+        if model.contains("sonnet") { return "Sonnet" }
+        if model.contains("haiku") { return "Haiku" }
+        if model.isEmpty { return "Claude" }
+        return model.components(separatedBy: "-").last ?? model
     }
 
     private func startNewSession() {
@@ -910,11 +910,6 @@ struct AppShell: View {
         // Don't pass a session ID — let Claude CLI create one on first message
         // The CLI-generated session ID is captured from the system event
         process.start(directory: homeDir)
-
-        // Run feature detection for this project
-        Task {
-            await featureDetector.scan(directory: homeDir)
-        }
     }
 
     private func detectGitBranch(in directory: String) {
@@ -1003,7 +998,7 @@ struct AppShell: View {
         ) {
             withAnimation(.easeInOut(duration: 0.2)) {
                 showDashboard.toggle()
-                if showDashboard { showAgentPanel = false; showMoodBoard = false }
+                if showDashboard { showAgentPanel = false }
             }
         })
 
@@ -1016,30 +1011,10 @@ struct AppShell: View {
         ) {
             withAnimation(.easeInOut(duration: 0.2)) {
                 showAgentPanel.toggle()
-                if showAgentPanel { showDashboard = false; showMoodBoard = false }
+                if showAgentPanel { showDashboard = false }
             }
         })
 
-        commands.append(CommandItem(
-            name: "Toggle Moodboard",
-            icon: "photo.on.rectangle.angled",
-            shortcut: "Tab",
-            subtitle: "Show or hide the moodboard",
-            category: .view
-        ) {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                showMoodBoard.toggle()
-                if showMoodBoard { showDashboard = false; showAgentPanel = false }
-            }
-        })
-
-        commands.append(CommandItem(
-            name: "Feature Map",
-            icon: "map.fill",
-            shortcut: "Cmd+Shift+F",
-            subtitle: "View detected features and suggestions",
-            category: .view
-        ) { showFeatureMap = true })
 
         commands.append(CommandItem(
             name: "Context Manager",
@@ -1206,17 +1181,6 @@ struct AppShell: View {
             for agent in orchestrator.agents {
                 orchestrator.stopAgent(id: agent.id)
             }
-        })
-
-        // Intelligence registry
-        commands.append(CommandItem(
-            name: "Show Intelligence Registry",
-            icon: "brain",
-            subtitle: "\(SharedIntelligence.shared.entries.count) entries — APIs, tools, patterns",
-            category: .view
-        ) {
-            let md = SharedIntelligence.shared.exportAsMarkdown()
-            process.send("Here's the shared intelligence registry for reference:\n\n\(md)")
         })
 
         // Performance
@@ -1607,8 +1571,11 @@ struct AppShell: View {
             process.stop()
             process.start(directory: path)
             detectGitBranch(in: path)
-            Task {
-                await featureDetector.scan(directory: path)
+
+            // Offer to scaffold optimized Claude instructions if not already set up
+            if !TemplateScaffolder.shared.hasProjectScaffold(at: url) {
+                pendingScaffoldURL = url
+                showScaffoldPrompt = true
             }
         }
     }

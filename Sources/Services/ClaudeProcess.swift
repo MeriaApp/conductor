@@ -490,8 +490,13 @@ final class ClaudeProcess: ObservableObject {
 
         onResult?(event)
 
-        // Sound: response complete
+        // Sound + notification: response complete
         SoundManager.shared.playResponseComplete()
+        SoundManager.shared.playBackgroundComplete()
+        NotificationService.shared.sendCompletionNotification(
+            title: "Claude finished",
+            body: String(messages.last?.copyText().prefix(100) ?? "Response complete")
+        )
     }
 
     // MARK: - Streaming Message Assembly

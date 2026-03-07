@@ -21,7 +21,7 @@ targets:
     sources:
       - Sources
     resources:
-      - Resources
+      - path: Resources/Assets.xcassets
     dependencies:
       - package: HighlightSwift
       - package: swift-markdown

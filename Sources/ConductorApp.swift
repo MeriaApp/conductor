@@ -12,9 +12,6 @@ struct ConductorApp: App {
     // Global services (shared across all windows)
     @StateObject private var themeEngine = ThemeEngine.shared
     @StateObject private var sessionManager = SessionManager.shared
-    @StateObject private var featureDetector = FeatureDetector.shared
-    @StateObject private var evolutionAgent = EvolutionAgent.shared
-    @StateObject private var sharedIntelligence = SharedIntelligence.shared
     @StateObject private var fontScale = FontScale.shared
     @StateObject private var modelRouter = ModelRouter.shared
     @StateObject private var projectManager = ProjectManager.shared
@@ -35,13 +32,10 @@ struct ConductorApp: App {
                 // Global services
                 .environmentObject(themeEngine)
                 .environmentObject(sessionManager)
-                .environmentObject(featureDetector)
-                .environmentObject(evolutionAgent)
-                .environmentObject(sharedIntelligence)
                 .environmentObject(fontScale)
                 .environmentObject(modelRouter)
                 .environmentObject(projectManager)
-                .frame(minWidth: 700, minHeight: 500)
+                .frame(minWidth: 480, minHeight: 300)
                 .preferredColorScheme(.dark)
                 .onAppear {
                     if windowId == nil { windowId = UUID() }
@@ -94,7 +88,6 @@ struct WindowContentView: View {
         .environmentObject(sessionState.contextPipeline)
         .environmentObject(sessionState.budgetOptimizer)
         .environmentObject(sessionState.sessionContinuity)
-        .environmentObject(sessionState.moodBoard)
         .environmentObject(sessionState.orchestrator)
         .environmentObject(sessionState.messageBus)
         .environmentObject(sessionState.permissionManager)

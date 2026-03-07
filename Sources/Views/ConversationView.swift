@@ -5,6 +5,7 @@ struct ConversationView: View {
     @EnvironmentObject private var process: ClaudeProcess
     @EnvironmentObject private var theme: ThemeEngine
     @State private var scrollProxy: ScrollViewProxy?
+    @State private var isUserAtBottom: Bool = true
 
     /// Search text passed from AppShell (Cmd+F)
     var searchText: String = ""
@@ -97,13 +98,36 @@ struct ConversationView: View {
                         .id("bottom")
                 }
                 .padding(.vertical, 16)
+                .textSelection(.enabled)
+                .background(
+                    ScrollPositionMonitor(isAtBottom: $isUserAtBottom)
+                )
             }
             .onAppear { scrollProxy = proxy }
             .onChange(of: process.messages.count) { _, _ in
-                scrollToBottom(proxy: proxy)
+                // User sent a message → always snap to bottom
+                // Claude responded → only scroll if user was already at bottom
+                if process.messages.last?.role == .user {
+                    isUserAtBottom = true
+                    scrollToBottom(proxy: proxy)
+                } else if isUserAtBottom {
+                    scrollToBottom(proxy: proxy)
+                }
             }
-            .onChange(of: process.isStreaming) { _, _ in
-                scrollToBottom(proxy: proxy)
+            .onChange(of: process.isStreaming) { _, streaming in
+                if streaming && isUserAtBottom {
+                    scrollToBottom(proxy: proxy)
+                }
+            }
+            // During streaming, periodically scroll to follow new content
+            .task(id: process.isStreaming) {
+                guard process.isStreaming else { return }
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(250))
+                    if isUserAtBottom {
+                        scrollToBottom(proxy: proxy, animated: false)
+                    }
+                }
             }
             .onChange(of: currentMatchIndex) { _, newIndex in
                 scrollToMatch(proxy: proxy, index: newIndex)
@@ -114,12 +138,42 @@ struct ConversationView: View {
                     scrollToMatch(proxy: proxy, index: 0)
                 }
             }
+            // Jump-to-bottom button when user has scrolled up
+            .overlay(alignment: .bottom) {
+                if !isUserAtBottom && !process.messages.isEmpty {
+                    Button {
+                        isUserAtBottom = true
+                        scrollToBottom(proxy: proxy)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.down")
+                                .font(.system(size: 10, weight: .medium))
+                            Text("Jump to bottom")
+                                .font(Typography.caption)
+                        }
+                        .foregroundColor(theme.primary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(theme.elevated)
+                        .clipShape(Capsule())
+                        .shadow(color: .black.opacity(0.3), radius: 4, y: 2)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.bottom, 8)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.easeInOut(duration: 0.2), value: isUserAtBottom)
         }
         } // else
     }
 
-    private func scrollToBottom(proxy: ScrollViewProxy) {
-        withAnimation(.easeOut(duration: 0.2)) {
+    private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool = true) {
+        if animated {
+            withAnimation(.easeOut(duration: 0.15)) {
+                proxy.scrollTo("bottom", anchor: .bottom)
+            }
+        } else {
             proxy.scrollTo("bottom", anchor: .bottom)
         }
     }
@@ -283,7 +337,6 @@ struct MarkdownTextView: View {
         Text(parseInlineMarkdown(text))
             .font(Typography.body)
             .foregroundColor(theme.primary)
-            .textSelection(.enabled)
             .lineSpacing(4)
     }
 
@@ -317,7 +370,6 @@ struct ListBlockView: View {
                     Text(item)
                         .font(Typography.body)
                         .foregroundColor(theme.primary)
-                        .textSelection(.enabled)
                 }
             }
         }
@@ -371,6 +423,82 @@ struct StreamingDots: View {
             Text(String(repeating: ".", count: dotCount + 1))
                 .font(Typography.caption)
                 .foregroundColor(.secondary)
+        }
+    }
+}
+
+// MARK: - Scroll Position Monitor
+
+/// Hooks into the parent NSScrollView to detect user scroll position.
+/// Only responds to user-initiated scrolling (didLiveScroll), so content
+/// growth during streaming doesn't falsely flip the flag.
+struct ScrollPositionMonitor: NSViewRepresentable {
+    @Binding var isAtBottom: Bool
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        view.frame = .zero
+        DispatchQueue.main.async {
+            context.coordinator.findScrollView(from: view)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(isAtBottom: $isAtBottom)
+    }
+
+    class Coordinator: NSObject {
+        @Binding var isAtBottom: Bool
+        private weak var scrollView: NSScrollView?
+
+        init(isAtBottom: Binding<Bool>) {
+            _isAtBottom = isAtBottom
+        }
+
+        func findScrollView(from view: NSView) {
+            var current: NSView? = view
+            while let v = current {
+                if let sv = v as? NSScrollView {
+                    self.scrollView = sv
+                    NotificationCenter.default.addObserver(
+                        self,
+                        selector: #selector(userDidScroll),
+                        name: NSScrollView.didLiveScrollNotification,
+                        object: sv
+                    )
+                    NotificationCenter.default.addObserver(
+                        self,
+                        selector: #selector(userDidScroll),
+                        name: NSScrollView.didEndLiveScrollNotification,
+                        object: sv
+                    )
+                    return
+                }
+                current = v.superview
+            }
+        }
+
+        @objc private func userDidScroll(_ notification: Notification) {
+            guard let scrollView = scrollView else { return }
+            let contentView = scrollView.contentView
+            let documentHeight = scrollView.documentView?.frame.height ?? 0
+            let visibleHeight = contentView.bounds.height
+            let scrollOffset = contentView.bounds.origin.y
+            let distanceFromBottom = documentHeight - (scrollOffset + visibleHeight)
+            let atBottom = distanceFromBottom < 50
+
+            if atBottom != isAtBottom {
+                DispatchQueue.main.async {
+                    self.isAtBottom = atBottom
+                }
+            }
+        }
+
+        deinit {
+            NotificationCenter.default.removeObserver(self)
         }
     }
 }
