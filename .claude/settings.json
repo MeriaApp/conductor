@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(# *)",
+      "Bash(cd *)",
+      "Bash(xcodebuild*)",
+      "Bash(xcodegen*)",
+      "Bash(xcrun*)",
+      "Bash(swift *)",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(python3*)",
+      "Bash(grep *)",
+      "Bash(wc *)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(sort *)",
+      "Bash(open *)",
+      "Bash(mkdir *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
+      "Bash(bash *)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git show*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git branch*)",
+      "Bash(git checkout*)",
+      "Bash(git stash*)",
+      "Bash(gh *)",
+      "Bash(claude *)",
+      "Bash(curl *)",
+      "Bash(which *)",
+      "Bash(echo *)"
+    ],
+    "deny": []
+  }
+}
