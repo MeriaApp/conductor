@@ -45,11 +45,7 @@ final class ContextPreservationPipeline: ObservableObject {
 
         switch toolName {
         case "Read":
-            if let path = json["file_path"] as? String {
-                contextManager.trackFileChange(
-                    path: path, type: .modified, summary: "Read"
-                )
-            }
+            break // Reads don't modify files — skip tracking to keep snapshots clean
 
         case "Edit":
             if let path = json["file_path"] as? String {

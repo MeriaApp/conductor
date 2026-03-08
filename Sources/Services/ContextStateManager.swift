@@ -18,15 +18,22 @@ final class ContextStateManager: ObservableObject {
 
     init() {}
 
+    /// Last turn's input tokens — reflects actual context window size
+    @Published var lastTurnInputTokens: Int = 0
+
     // MARK: - Token Tracking
 
-    /// Update token counts from a ClaudeProcess
+    /// Update cumulative totals from a ClaudeProcess (for cost display)
     func updateFromProcess(_ process: ClaudeProcess) {
         inputTokens = process.totalInputTokens
         outputTokens = process.totalOutputTokens
+    }
 
-        let totalUsed = inputTokens + outputTokens
-        contextPercentage = Double(totalUsed) / Double(maxContextTokens)
+    /// Update context percentage from per-turn metrics (actual context window size)
+    func updateFromTurnMetrics(_ metrics: TurnMetrics) {
+        lastTurnInputTokens = metrics.inputTokens
+        // Per-turn inputTokens = actual context window size for that turn
+        contextPercentage = Double(metrics.inputTokens) / Double(maxContextTokens)
         warningLevel = ContextWarningLevel.from(percentage: contextPercentage)
     }
 
@@ -38,7 +45,7 @@ final class ContextStateManager: ObservableObject {
 
     /// Check if sending a message would trigger compaction
     func wouldTriggerCompaction(estimatedTokens: Int) -> Bool {
-        let projected = Double(inputTokens + outputTokens + estimatedTokens) / Double(maxContextTokens)
+        let projected = Double(lastTurnInputTokens + estimatedTokens) / Double(maxContextTokens)
         return projected > 0.85 // Default compaction threshold
     }
 

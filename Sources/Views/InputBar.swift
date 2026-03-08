@@ -123,6 +123,14 @@ struct InputBar: View {
                                         }
                                     }
                                 },
+                                onFileDrop: { urls in
+                                    for url in urls {
+                                        if !inputText.isEmpty && !inputText.hasSuffix("\n\n") {
+                                            inputText += inputText.hasSuffix("\n") ? "\n" : "\n\n"
+                                        }
+                                        inputText += "@\(url.path)\n\n"
+                                    }
+                                },
                                 onArrowUp: {
                                     // Slash autocomplete takes priority
                                     if !slashMatches.isEmpty {
@@ -339,10 +347,10 @@ struct InputBar: View {
                                 }
                             }
                         } else {
-                            if !inputText.isEmpty && !inputText.hasSuffix("\n") {
-                                inputText += "\n"
+                            if !inputText.isEmpty && !inputText.hasSuffix("\n\n") {
+                                inputText += inputText.hasSuffix("\n") ? "\n" : "\n\n"
                             }
-                            inputText += "@\(url.path)"
+                            inputText += "@\(url.path)\n\n"
                         }
                     }
                 }
@@ -437,23 +445,33 @@ struct InputTextEditor: NSViewRepresentable {
     var onTextChange: ((String) -> Void)?
     var onHeightChange: ((CGFloat) -> Void)?
     var onImagePaste: (([URL]) -> Void)?
+    var onFileDrop: (([URL]) -> Void)?
     var onArrowUp: (() -> Bool)?
     var onArrowDown: (() -> Bool)?
     var onTab: (() -> Bool)?
     var onEscape: (() -> Bool)?
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = PasteAwareTextView.scrollableTextView()
-        let textView = scrollView.documentView as! NSTextView
+        // Build a fresh text stack so PasteAwareTextView owns its text container
+        let textStorage = NSTextStorage()
+        let layoutManager = NSLayoutManager()
+        textStorage.addLayoutManager(layoutManager)
+        let textContainer = NSTextContainer(size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
+        textContainer.widthTracksTextView = true
+        layoutManager.addTextContainer(textContainer)
 
-        // Replace with our paste-aware subclass
-        let pasteTV = PasteAwareTextView(frame: textView.frame, textContainer: textView.textContainer)
+        let pasteTV = PasteAwareTextView(frame: .zero, textContainer: textContainer)
+        pasteTV.registerForDraggedTypes([.fileURL])
         pasteTV.onImagePaste = { urls in
             context.coordinator.onImagePaste?(urls)
         }
-        scrollView.documentView = pasteTV
+        pasteTV.onFileDrop = { urls in
+            context.coordinator.onFileDrop?(urls)
+        }
 
         pasteTV.delegate = context.coordinator
+        pasteTV.isEditable = true
+        pasteTV.isSelectable = true
         pasteTV.isRichText = false
         pasteTV.isAutomaticQuoteSubstitutionEnabled = false
         pasteTV.isAutomaticDashSubstitutionEnabled = false
@@ -465,10 +483,18 @@ struct InputTextEditor: NSViewRepresentable {
         pasteTV.font = Typography.inputNS
         pasteTV.textColor = textColor
         pasteTV.insertionPointColor = textColor
+        pasteTV.isVerticallyResizable = true
+        pasteTV.isHorizontallyResizable = false
+        pasteTV.autoresizingMask = [.width]
+        pasteTV.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        pasteTV.minSize = NSSize(width: 0, height: 0)
 
-        // Make the scroll view transparent
+        let scrollView = NSScrollView()
+        scrollView.documentView = pasteTV
         scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = false
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
         scrollView.hasHorizontalScroller = false
         scrollView.borderType = .noBorder
 
@@ -491,15 +517,19 @@ struct InputTextEditor: NSViewRepresentable {
         context.coordinator.onTextChange = onTextChange
         context.coordinator.onHeightChange = onHeightChange
         context.coordinator.onImagePaste = onImagePaste
+        context.coordinator.onFileDrop = onFileDrop
         context.coordinator.onArrowUp = onArrowUp
         context.coordinator.onArrowDown = onArrowDown
         context.coordinator.onTab = onTab
         context.coordinator.onEscape = onEscape
 
-        // Keep paste-aware text view's callback in sync
+        // Keep paste-aware text view's callbacks in sync
         if let pasteTV = textView as? PasteAwareTextView {
             pasteTV.onImagePaste = { urls in
                 context.coordinator.onImagePaste?(urls)
+            }
+            pasteTV.onFileDrop = { urls in
+                context.coordinator.onFileDrop?(urls)
             }
         }
 
@@ -520,6 +550,7 @@ struct InputTextEditor: NSViewRepresentable {
         var onTextChange: ((String) -> Void)?
         var onHeightChange: ((CGFloat) -> Void)?
         var onImagePaste: (([URL]) -> Void)?
+        var onFileDrop: (([URL]) -> Void)?
         var onArrowUp: (() -> Bool)?
         var onArrowDown: (() -> Bool)?
         var onTab: (() -> Bool)?
@@ -545,6 +576,8 @@ struct InputTextEditor: NSViewRepresentable {
             text = textView.string
             onTextChange?(textView.string)
             recalcHeight(textView: textView)
+            // Keep cursor visible when typing into lower lines
+            textView.scrollRangeToVisible(textView.selectedRange())
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -593,12 +626,55 @@ struct InputTextEditor: NSViewRepresentable {
 /// NSTextView subclass that intercepts Cmd+V to detect pasted images
 class PasteAwareTextView: NSTextView {
     var onImagePaste: (([URL]) -> Void)?
+    var onFileDrop: (([URL]) -> Void)?
 
     private static let imageTypes: [NSPasteboard.PasteboardType] = [
         .tiff, .png,
         NSPasteboard.PasteboardType("public.jpeg"),
         NSPasteboard.PasteboardType("public.heic"),
     ]
+
+    private static let imageExts: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "bmp", "svg"]
+
+    override func awakeFromNib() {
+        super.awakeFromNib()
+        registerForDraggedTypes([.fileURL])
+    }
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        if sender.draggingPasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) {
+            return .copy
+        }
+        return super.draggingEntered(sender)
+    }
+
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        if sender.draggingPasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) {
+            return .copy
+        }
+        return super.draggingUpdated(sender)
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        let pb = sender.draggingPasteboard
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: [
+            .urlReadingFileURLsOnly: true
+        ]) as? [URL], !urls.isEmpty {
+            let imageURLs = urls.filter { Self.imageExts.contains($0.pathExtension.lowercased()) }
+            let otherURLs = urls.filter { !Self.imageExts.contains($0.pathExtension.lowercased()) }
+
+            if !imageURLs.isEmpty {
+                onImagePaste?(imageURLs)
+            }
+            if !otherURLs.isEmpty {
+                onFileDrop?(otherURLs)
+            }
+            if !imageURLs.isEmpty || !otherURLs.isEmpty {
+                return true
+            }
+        }
+        return super.performDragOperation(sender)
+    }
 
     override func paste(_ sender: Any?) {
         let pb = NSPasteboard.general
@@ -623,7 +699,7 @@ class PasteAwareTextView: NSTextView {
                 // Also paste any non-image URLs as text
                 let nonImages = urls.filter { !imageExts.contains($0.pathExtension.lowercased()) }
                 if !nonImages.isEmpty {
-                    let paths = nonImages.map { "@\($0.path)" }.joined(separator: "\n")
+                    let paths = nonImages.map { "@\($0.path)" }.joined(separator: "\n\n") + "\n\n"
                     insertText(paths, replacementRange: selectedRange())
                 }
                 return

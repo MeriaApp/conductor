@@ -5,7 +5,14 @@ struct ToolUseView: View {
     let block: ToolUseBlock
     var onFilePathTap: ((String) -> Void)?
     @EnvironmentObject private var theme: ThemeEngine
-    @State private var isExpanded = false
+    @State private var isExpanded: Bool
+
+    init(block: ToolUseBlock, onFilePathTap: ((String) -> Void)? = nil) {
+        self.block = block
+        self.onFilePathTap = onFilePathTap
+        // Auto-expand failed tools so error is immediately visible
+        self._isExpanded = State(initialValue: block.isError || block.status == .failed)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -69,9 +76,9 @@ struct ToolUseView: View {
 
             // Expanded output
             if isExpanded, let output = block.output {
-                Text(output)
+                Text(stripXMLTags(output))
                     .font(Typography.codeBlock)
-                    .foregroundColor(theme.secondary)
+                    .foregroundColor(block.isError ? theme.rose.opacity(0.85) : theme.secondary)
                     .textSelection(.enabled)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 8)
@@ -201,6 +208,11 @@ struct ToolUseView: View {
         let components = path.components(separatedBy: "/").filter { !$0.isEmpty }
         if components.count <= 3 { return path }
         return ".../" + components.suffix(3).joined(separator: "/")
+    }
+
+    private func stripXMLTags(_ text: String) -> String {
+        text.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func formatDuration(_ seconds: TimeInterval) -> String {

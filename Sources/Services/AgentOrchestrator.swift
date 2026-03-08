@@ -21,6 +21,9 @@ final class AgentOrchestrator: ObservableObject {
 
     // MARK: - Agent Lifecycle
 
+    /// Reference to main process for inheriting settings
+    weak var mainProcess: ClaudeProcess?
+
     /// Spawn a new agent with a given role
     @discardableResult
     func spawnAgent(name: String, role: AgentRole, directory: String? = nil) -> Agent {
@@ -30,6 +33,16 @@ final class AgentOrchestrator: ObservableObject {
         // Create a dedicated ClaudeProcess for this agent
         let process = ClaudeProcess()
         process.systemPrompt = role.systemPromptSuffix
+
+        // Inherit token optimization settings from the main process
+        if let main = mainProcess {
+            process.optimizationsEnabled = main.optimizationsEnabled
+            process.autoCompactThreshold = main.autoCompactThreshold
+            process.selectedModel = main.selectedModel
+            // Sub-agents default to medium effort (narrower tasks than main)
+            process.effortLevel = .medium
+        }
+
         processes[agent.id] = process
 
         // Wire result callback — when agent finishes, broadcast on message bus

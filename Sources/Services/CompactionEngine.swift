@@ -78,23 +78,6 @@ final class CompactionEngine: ObservableObject {
         return prompt
     }
 
-    // MARK: - Post-Compaction Recovery
-
-    /// After compaction, reinject critical context as a regular message
-    func recoverFromCompaction(process: ClaudeProcess) {
-        guard let prompt = generateReinjectionPrompt() else { return }
-
-        // Send preserved context as a regular message — Claude will absorb it
-        let message = """
-        [CONTEXT RECOVERY] The previous conversation was compacted. Here is the critical context that was preserved:
-
-        \(prompt)
-
-        Please acknowledge that you've received this context and are ready to continue.
-        """
-        process.send(message)
-    }
-
     // MARK: - Hook Integration
 
     /// Generate a PreCompact hook script that auto-saves context

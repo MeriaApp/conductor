@@ -7,6 +7,7 @@ struct PerformanceDashboard: View {
     @EnvironmentObject private var sessionManager: SessionManager
     @EnvironmentObject private var contextManager: ContextStateManager
     @EnvironmentObject private var orchestrator: AgentOrchestrator
+    @EnvironmentObject private var budgetOptimizer: ContextBudgetOptimizer
     @Binding var isPresented: Bool
 
     var body: some View {
@@ -53,6 +54,13 @@ struct PerformanceDashboard: View {
                     // Agent Stats (if any agents running)
                     if !orchestrator.agents.isEmpty {
                         agentStats
+
+                        Divider().opacity(0.2)
+                    }
+
+                    // Optimization Suggestions
+                    if !budgetOptimizer.optimizationSuggestions.isEmpty {
+                        optimizationSuggestions
 
                         Divider().opacity(0.2)
                     }
@@ -295,6 +303,52 @@ struct PerformanceDashboard: View {
                     .padding(.vertical, 2)
                 }
             }
+        }
+    }
+
+    // MARK: - Optimization Suggestions
+
+    private var optimizationSuggestions: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Token Savings Available")
+                    .font(Typography.bodyBold)
+                    .foregroundColor(theme.bright)
+                Spacer()
+                Text("~\(formatTokens(budgetOptimizer.estimatedSavings)) saveable")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(theme.sage)
+            }
+
+            ForEach(budgetOptimizer.optimizationSuggestions) { suggestion in
+                HStack(spacing: 8) {
+                    Image(systemName: iconForSuggestion(suggestion.type))
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.amber)
+                        .frame(width: 16)
+
+                    Text(suggestion.description)
+                        .font(Typography.caption)
+                        .foregroundColor(theme.secondary)
+                        .lineLimit(2)
+
+                    Spacer()
+
+                    Text("~\(formatTokens(suggestion.estimatedTokenSavings))")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(theme.muted)
+                }
+                .padding(.vertical, 2)
+            }
+        }
+    }
+
+    private func iconForSuggestion(_ type: OptimizationType) -> String {
+        switch type {
+        case .redundantRead: return "doc.on.doc"
+        case .largeFileRead: return "doc.text.fill"
+        case .verboseError: return "exclamationmark.triangle"
+        case .oldConversation: return "clock.arrow.circlepath"
         }
     }
 

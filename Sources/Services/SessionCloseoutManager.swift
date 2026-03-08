@@ -20,10 +20,9 @@ final class SessionCloseoutManager: ObservableObject {
     private var timeoutTask: Task<Void, Never>?
     private var originalOnResult: ((ResultEvent) -> Void)?
 
-    /// Full closeout: send prompt to Claude, wait for response, then call completion.
-    /// - Parameters:
-    ///   - process: The active ClaudeProcess to send the closeout prompt to
-    ///   - completion: Called when closeout finishes (or times out)
+    /// Graceful closeout: interrupt streaming, persist artifacts, call completion.
+    /// Does NOT send a Claude prompt — avoids wasting a full context-window read (~160K tokens)
+    /// just for "please commit and summarize". Artifacts are already auto-saved every turn.
     func beginCloseout(process: ClaudeProcess, completion: @escaping () -> Void) {
         guard !isClosingOut else {
             // Already closing — second click means "just close now"
@@ -38,7 +37,7 @@ final class SessionCloseoutManager: ObservableObject {
         }
 
         isClosingOut = true
-        closeoutStatus = "Closing session..."
+        closeoutStatus = "Saving session..."
 
         // If Claude is mid-stream, interrupt first
         if process.isStreaming {
@@ -46,33 +45,8 @@ final class SessionCloseoutManager: ObservableObject {
             process.interrupt()
         }
 
-        // Chain onto onResult — preserve existing callback
-        originalOnResult = process.onResult
-        let original = originalOnResult
-
-        process.onResult = { [weak self] event in
-            // Fire the original callback (auto-save artifacts, etc.)
-            original?(event)
-
-            Task { @MainActor [weak self] in
-                self?.finishCloseout(completion: completion)
-            }
-        }
-
-        // 60-second timeout — if Claude doesn't respond, close anyway
-        timeoutTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(60))
-            guard !Task.isCancelled else { return }
-            await MainActor.run { [weak self] in
-                guard let self, self.isClosingOut else { return }
-                self.closeoutStatus = "Timed out — saving state..."
-                self.finishCloseout(completion: completion)
-            }
-        }
-
-        // Send the closeout prompt
-        closeoutStatus = "Asking Claude to commit and summarize..."
-        process.send(Self.closeoutPrompt)
+        // Immediate completion — artifacts already persisted via onResult auto-save
+        finishCloseout(completion: completion)
     }
 
     /// Quick save — immediate artifact persistence without Claude prompt (for Cmd+Q)

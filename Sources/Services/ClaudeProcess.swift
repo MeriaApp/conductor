@@ -55,17 +55,17 @@ final class ClaudeProcess: ObservableObject {
     private let claudePath: String
 
     /// Working directory for the session
-    var workingDirectory: String?
+    @Published var workingDirectory: String?
 
     /// System prompt appended to the agent's role (used on first message only)
     var systemPrompt: String?
 
     /// CLI configuration flags
-    var effortLevel: EffortLevel = .high
-    var permissionMode: CLIPermissionMode = .default_
-    var useWorktree: Bool = false
-    var outputMode: OutputMode = .standard
-    var selectedModel: ModelChoice?
+    @Published var effortLevel: EffortLevel = .high
+    @Published var permissionMode: CLIPermissionMode = .bypassPermissions
+    @Published var useWorktree: Bool = false
+    @Published var outputMode: OutputMode = .standard
+    @Published var selectedModel: ModelChoice?
 
     /// Max budget in USD (0 = unlimited)
     var maxBudgetUSD: Double = 0
@@ -328,6 +328,10 @@ final class ClaudeProcess: ObservableObject {
     private func processLine(_ line: String) {
         guard let event = StreamEventParser.parse(line: line) else { return }
 
+        // Cap events array to prevent unbounded memory growth
+        if events.count >= 200 {
+            events.removeFirst(events.count - 150)
+        }
         events.append(event)
 
         switch event {
@@ -355,6 +359,10 @@ final class ClaudeProcess: ObservableObject {
         // Store CLI-generated session ID for --resume on subsequent messages
         if let sid = event.sessionId {
             sessionId = sid
+        }
+        // Update working directory from CLI (drives window title)
+        if let cwd = event.cwd {
+            workingDirectory = cwd
         }
         cliVersion = event.cliVersion
         onSystem?(event)

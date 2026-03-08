@@ -401,18 +401,31 @@ struct MessageSeparator: View {
 
 struct StreamingIndicator: View {
     @EnvironmentObject private var theme: ThemeEngine
+    @State private var startTime = Date()
 
     var body: some View {
-        HStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.mini)
-                .scaleEffect(0.8)
-            Text("Claude is thinking...")
-                .font(Typography.caption)
-                .foregroundColor(theme.lavender)
+        TimelineView(.periodic(from: startTime, by: 1)) { timeline in
+            let elapsed = Int(timeline.date.timeIntervalSince(startTime))
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.mini)
+                    .scaleEffect(0.8)
+                Text("Claude is thinking...")
+                    .font(Typography.caption)
+                    .foregroundColor(theme.lavender)
+                Text(formatElapsed(elapsed))
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(theme.muted)
+            }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 8)
+        .onAppear { startTime = Date() }
+    }
+
+    private func formatElapsed(_ seconds: Int) -> String {
+        if seconds < 60 { return "\(seconds)s" }
+        return "\(seconds / 60)m \(seconds % 60)s"
     }
 }
 

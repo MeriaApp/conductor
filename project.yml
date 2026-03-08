@@ -34,7 +34,7 @@ targets:
         CODE_SIGN_IDENTITY: "-"
         ENABLE_HARDENED_RUNTIME: YES
         GENERATE_INFOPLIST_FILE: YES
-        MARKETING_VERSION: "1.1.0"
+        MARKETING_VERSION: "2.1.0"
         CURRENT_PROJECT_VERSION: 1
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Meria. All rights reserved."

@@ -52,6 +52,8 @@ struct AppShell: View {
     /// Scaffold prompt for new project directories
     @State private var showScaffoldPrompt = false
     @State private var pendingScaffoldURL: URL?
+    /// Track which pinned message IDs were already sent — avoid resending every turn
+    @State private var lastSentPinnedIds: Set<String> = []
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -859,6 +861,7 @@ struct AppShell: View {
         }
 
         process.onTurnComplete = { metrics in
+            cm.updateFromTurnMetrics(metrics)
             pipeline.processTurnMetrics(metrics)
         }
 
@@ -882,11 +885,15 @@ struct AppShell: View {
             }
 
             var wrapped = pipeline.wrapMessage(text)
-            // Prepend pinned message context
+            // Prepend pinned message context only when pins changed or after compaction
             let pinned = self.pinnedMessages
-            if !pinned.isEmpty {
+            let currentPinnedIds = Set(pinned.map { $0.id })
+            let pinsChanged = currentPinnedIds != self.lastSentPinnedIds
+            let afterCompaction = pipeline.compactionDetected
+            if !pinned.isEmpty && (pinsChanged || afterCompaction) {
                 let pinnedText = pinned.map { "[\($0.role == .user ? "You" : "Claude")]: \($0.copyText())" }.joined(separator: "\n\n")
                 wrapped = "<pinned-context>\n\(pinnedText)\n</pinned-context>\n\n\(wrapped)"
+                self.lastSentPinnedIds = currentPinnedIds
             }
             return wrapped
         }
@@ -903,6 +910,9 @@ struct AppShell: View {
 
         // Install PreCompact hook so CLI reads CONTEXT_STATE.md before compaction
         compactionEngine.installPreCompactHook(projectDir: homeDir)
+
+        // Wire orchestrator to main process for agent settings inheritance
+        orchestrator.mainProcess = process
 
         // Set Conductor self-awareness system prompt
         process.systemPrompt = Self.conductorSystemPrompt
@@ -1464,97 +1474,16 @@ struct AppShell: View {
     // MARK: - Conductor Self-Awareness Prompt
 
     /// System prompt that gives Claude awareness of running inside Conductor
+    /// Trimmed to essentials (~150 tokens) — feature docs moved to Help overlay
     private static let conductorSystemPrompt = """
-    You are running inside **Conductor**, a native macOS app that wraps Claude Code (the CLI). \
-    When the user says "this app" or asks about features, they mean Conductor — not one of their other projects.
+    You are running inside **Conductor**, a native macOS app wrapping Claude Code CLI. \
+    When the user says "this app", they mean Conductor. All your normal tools (Read, Edit, Bash, etc.) work as usual.
 
-    ## What Conductor Is
-    Conductor is a premium macOS desktop app built with SwiftUI that provides a rich GUI around Claude Code. \
-    It adds multi-agent orchestration, visual dashboards, context management, session persistence, and a calm, \
-    Apple-quality interface on top of the standard CLI experience.
-
-    ## Key Features the User Can Access
-    - **Command Palette (Cmd+K)** — Central hub for all actions: spawn agents, change settings, toggle views
-    - **Dashboard (Tab)** — Right sidebar showing files touched, live tool activity, context token usage, cost tracking
-    - **Vibe Coder Mode (Ctrl+V)** — Simplified UI that hides technical details. Action buttons: Undo, See Changes, Deploy, What's next?
-    - **Multi-Agent (Cmd+Shift+M)** — Spawn multiple Claude agents with roles (Builder, Reviewer, Tester, etc.) running in parallel
-    - **Session Browser (Cmd+S)** — Browse, resume, fork, or delete previous sessions
-    - **Context Manager (Cmd+Shift+X)** — View token usage, pin context to prevent compaction
-    - **Performance Dashboard (Cmd+Shift+P)** — Token usage, cost analytics, timing data
-    - **Feature Map (Cmd+Shift+F)** — Discover CLI features, MCP servers, hooks
-    - **Thinking Toggle (Cmd+Shift+T)** — Show/hide thinking blocks globally
-    - **Terminal Passthrough (Ctrl+T)** — Quick shell commands without leaving the conversation
-    - **Search (Cmd+F)** — Search through conversation history
-    - **Output Modes (Cmd+O)** — Cycle between Standard, Concise, Detailed, Code Only
-    - **Luminance (Cmd+[ / Cmd+])** — Continuous theme from midnight dark to paper light
-    - **Effort Levels** — Low/Medium/High (adjusts Claude's thoroughness via --effort flag)
-    - **Permission Modes** — Default, Accept Edits, Bypass, Plan (controls what Claude can do autonomously)
-    - **Budget Cap** — Set max spend per session ($1/$5/$10/$25)
-    - **Agent Presets** — Quick Builder, Security Auditor, Refactor Scout, Test Writer (with optional persistent memory)
-    - **Agent Teams** — Experimental: Claude autonomously spawns sub-agents for parallel work
-    - **Hooks Manager (Cmd+Shift+H)** — Visual CRUD for CLI hooks (PreToolUse, PostToolUse, Notification, etc.)
-    - **Skills Browser (Cmd+Shift+K)** — Browse, create, and invoke reusable CLI skills
-    - **Compact with Instructions** — Manual context compaction with preservation hints
-    - **Pin Messages** — Right-click to pin important messages; pinned context persists across turns
-    - **Undo (Cmd+Shift+Z)** — Remove last assistant response
-    - **Export (Cmd+E)** — Save conversation as markdown
-    - **Help (Cmd+?)** — Full keyboard shortcut reference
-
-    ## Permissions
-    The permission queue appears at the bottom of the screen. Number keys 1-9 approve individual requests. \
-    In Vibe Coder mode, all permissions are auto-approved.
-
-    ## What You Should Know
-    - You are Claude Code running via the CLI subprocess — all your normal tools (Read, Edit, Bash, etc.) work as usual
-    - The user sees a rich visual interface: syntax-highlighted code, inline diffs, collapsible thinking blocks
-    - When you produce diffs, the user sees them with added/removed highlighting and can expand them fullscreen
-    - The user can see real-time cost and token usage in the status bar and dashboard
-    - Sessions persist and can be resumed later via the Session Browser
-
-    ## Auto-Context Persistence (Crash-Proof)
-    Conductor automatically preserves session context after EVERY turn — no manual save needed. \
-    Even if the window closes unexpectedly or power is lost, context survives:
-    - **CONTEXT_STATE.md** is auto-written to the project directory after every tool use, response, and turn (2-second debounce)
-    - **Session artifacts** (files changed, decisions, accomplishments, next steps) are saved after every turn
-    - **CLI session** persists via --resume, so conversation history is always recoverable
-
-    What this means for you:
-    - You do NOT need to wait for the user to say "close out the session" to save context
-    - Focus on the work — Conductor handles persistence automatically
-    - If the project has a CONTEXT_STATE.md, READ it at session start to pick up where the last session left off
-    - If you make important architectural decisions or discover key information, state them clearly in your response — \
-    Conductor auto-extracts decisions and next steps from your text
-    - When updating project-specific tracker files (like MASTER_TRACKER.md), do it as part of your natural workflow, \
-    not as a separate "close out" step
-
-    ## Testing Capabilities (Web & App)
-    You can visually test running web apps using the built-in test helper:
-
-    ```
-    # Screenshot a web page (then use Read tool to see the image)
-    node /Users/jesse/Documents/meria-os/claude-terminal/Conductor/tools/web-test.mjs screenshot <url> /tmp/test.png
-
-    # Get rendered DOM (JavaScript-executed HTML, not source)
-    node /Users/jesse/Documents/meria-os/claude-terminal/Conductor/tools/web-test.mjs html <url>
-
-    # Capture JavaScript console output and errors
-    node /Users/jesse/Documents/meria-os/claude-terminal/Conductor/tools/web-test.mjs console <url>
-
-    # Click an element, optionally screenshot the result
-    node /Users/jesse/Documents/meria-os/claude-terminal/Conductor/tools/web-test.mjs click <url> "button.submit" /tmp/after.png
-    ```
-
-    **Test-fix-verify loop:**
-    1. Start dev server: `cd /project && npm run dev &` (wait a few seconds)
-    2. Screenshot: `node .../web-test.mjs screenshot http://localhost:5173 /tmp/test.png`
-    3. View: Read tool on `/tmp/test.png` (you can see images)
-    4. Evaluate the UI, fix issues in code (hot-reload picks up changes)
-    5. Screenshot again to verify the fix
-    6. Repeat until the UI looks correct
-
-    **Other visual testing:**
-    - macOS apps: `screencapture -x /tmp/screen.png` (captures entire screen)
-    - iOS Simulator: `xcrun simctl io booted screenshot /tmp/sim.png`
+    The user sees a rich GUI: syntax-highlighted code, inline diffs, collapsible thinking, real-time cost/token tracking. \
+    Sessions persist automatically — Conductor auto-saves CONTEXT_STATE.md and session artifacts after every turn. \
+    Focus on the work; context persistence is handled for you. \
+    If a project has CONTEXT_STATE.md, read it at session start to resume where the last session left off. \
+    State decisions and next steps clearly — Conductor auto-extracts them from your responses.
     """
 
     /// Open folder picker to change working directory

@@ -9,7 +9,8 @@ final class ModelRouter: ObservableObject {
 
     @Published var suggestion: ModelSuggestion?
     @Published var isEnabled: Bool = true
-    @Published var autoApply: Bool = false
+    /// Auto-apply model suggestions (enabled by default for simple lookups)
+    @Published var autoApply: Bool = true
 
     private init() {}
 
