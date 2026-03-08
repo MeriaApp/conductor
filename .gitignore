@@ -1,3 +1,11 @@
 releases/
 *.xcodeproj
 DerivedData/
+.env*
+*.p8
+*.pem
+*.key
+*.cer
+*.mobileprovision
+secrets*
+credentials*
