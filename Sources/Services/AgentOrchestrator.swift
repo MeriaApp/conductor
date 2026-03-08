@@ -527,6 +527,102 @@ final class AgentOrchestrator: ObservableObject {
 
     // MARK: - Sync State
 
+    // MARK: - One-Click Workflow Presets
+
+    /// Callback for synthesized team results — fires when a workflow completes
+    var onWorkflowComplete: ((String) -> Void)?
+
+    /// "Audit Codebase" — spawns 3 researchers in swarm pattern
+    func runAuditWorkflow(projectDir: String) {
+        cleanupPipeline()
+        activePattern = .swarm
+
+        let security = spawnAgent(name: "Security Scan", role: .reviewer, directory: projectDir)
+        let quality = spawnAgent(name: "Code Quality", role: .researcher, directory: projectDir)
+        let performance = spawnAgent(name: "Performance", role: .researcher, directory: projectDir)
+
+        // Set effort to medium for cost efficiency
+        [security, quality, performance].forEach { agent in
+            processes[agent.id]?.effortLevel = .medium
+            processes[agent.id]?.smartEffort = false
+        }
+
+        assignTask(agentId: security.id, task: """
+        Audit this codebase for security issues. Focus on: injection attacks, hardcoded secrets, \
+        auth bypass, XSS, insecure dependencies. List findings with severity (Critical/High/Medium/Low). \
+        When done, respond with AUDIT_COMPLETE followed by your findings.
+        """)
+
+        assignTask(agentId: quality.id, task: """
+        Audit this codebase for code quality. Focus on: dead code, duplication, overly complex functions, \
+        inconsistent patterns, missing error handling, type safety issues. List findings with impact level. \
+        When done, respond with AUDIT_COMPLETE followed by your findings.
+        """)
+
+        assignTask(agentId: performance.id, task: """
+        Audit this codebase for performance issues. Focus on: unnecessary allocations, N+1 patterns, \
+        blocking main thread, memory leaks, inefficient algorithms, large bundle size. List findings. \
+        When done, respond with AUDIT_COMPLETE followed by your findings.
+        """)
+
+        // Synthesize results when all 3 complete
+        synthesizeOnCompletion(agentIds: [security.id, quality.id, performance.id], workflowName: "Codebase Audit")
+    }
+
+    /// "Parallel Research" — spawns researchers for different aspects of a question
+    func runResearchWorkflow(projectDir: String, question: String) {
+        cleanupPipeline()
+        activePattern = .swarm
+
+        let codebase = spawnAgent(name: "Codebase Research", role: .researcher, directory: projectDir)
+        let patterns = spawnAgent(name: "Pattern Analysis", role: .researcher, directory: projectDir)
+
+        [codebase, patterns].forEach { agent in
+            processes[agent.id]?.effortLevel = .medium
+            processes[agent.id]?.smartEffort = false
+        }
+
+        assignTask(agentId: codebase.id, task: """
+        Research this question by reading the codebase: \(question)
+        Focus on: relevant files, current implementation, data flow, dependencies. \
+        When done, respond with RESEARCH_COMPLETE followed by your findings.
+        """)
+
+        assignTask(agentId: patterns.id, task: """
+        Research this question by analyzing patterns and architecture: \(question)
+        Focus on: design patterns used, architectural decisions, constraints, potential approaches. \
+        When done, respond with RESEARCH_COMPLETE followed by your findings.
+        """)
+
+        synthesizeOnCompletion(agentIds: [codebase.id, patterns.id], workflowName: "Research")
+    }
+
+    /// Collect final results from agents and synthesize into a unified report
+    private func synthesizeOnCompletion(agentIds: [String], workflowName: String) {
+        var completedResults: [String: String] = [:]
+
+        for agentId in agentIds {
+            let sub = messageBus.subscribe(agentId: "\(agentId)_workflow") { [weak self] message in
+                guard message.from == agentId, message.type == .result else { return }
+
+                Task { @MainActor in
+                    guard let self else { return }
+                    let agentName = self.agents.first(where: { $0.id == agentId })?.name ?? "Agent"
+                    completedResults[agentId] = "### \(agentName)\n\(message.payload)"
+
+                    // All agents done?
+                    if completedResults.count == agentIds.count {
+                        let report = "## \(workflowName) — Team Report\n\n" +
+                            agentIds.compactMap { completedResults[$0] }.joined(separator: "\n\n---\n\n")
+                        self.onWorkflowComplete?(report)
+                        self.cleanupPipeline()
+                    }
+                }
+            }
+            pipelineSubscriptionIds.append(sub)
+        }
+    }
+
     /// Sync agent state from process state
     func syncAgentStates() {
         for agent in agents {

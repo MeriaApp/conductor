@@ -12,6 +12,9 @@ final class ContextPreservationPipeline: ObservableObject {
     @Published var recoveryPending = false
     @Published var snapshotTaken = false
 
+    /// Callback when compaction is detected — passes summary string for toast display
+    var onCompactionDetected: ((String) -> Void)?
+
     // MARK: - Configuration
 
     var projectDirectory: String?
@@ -117,6 +120,17 @@ final class ContextPreservationPipeline: ObservableObject {
                     pendingReinjection = recovery
                     recoveryPending = true
                 }
+
+                // Build toast summary
+                let snapshot = contextManager.currentSnapshot
+                let decisionCount = snapshot?.decisions.count ?? 0
+                let fileCount = snapshot?.fileChanges.count ?? 0
+                let parts = [
+                    decisionCount > 0 ? "\(decisionCount) decision\(decisionCount == 1 ? "" : "s")" : nil,
+                    fileCount > 0 ? "\(fileCount) file\(fileCount == 1 ? "" : "s")" : nil,
+                ].compactMap { $0 }
+                let preserved = parts.isEmpty ? "context" : parts.joined(separator: ", ")
+                onCompactionDetected?("Context compacted — \(preserved) preserved")
             }
         }
 

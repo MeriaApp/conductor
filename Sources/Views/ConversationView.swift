@@ -67,9 +67,18 @@ struct ConversationView: View {
                             .background(
                                 isMatch
                                     ? RoundedRectangle(cornerRadius: 4)
-                                        .fill(theme.sky.opacity(0.08))
+                                        .fill(theme.sky.opacity(0.12))
                                     : nil
                             )
+                            .overlay(alignment: .leading) {
+                                if isMatch {
+                                    // Highlight bar on left edge for matched messages
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(theme.sky.opacity(0.6))
+                                        .frame(width: 3)
+                                        .padding(.vertical, 4)
+                                }
+                            }
                             .contextMenu {
                                 Button(message.isPinned ? "Unpin Message" : "Pin Message") {
                                     onTogglePin?(message.id)
@@ -322,6 +331,8 @@ struct ContentBlockRenderer: View {
                 }
             } else if let listBlock = block as? ListBlock {
                 ListBlockView(block: listBlock)
+            } else if let quoteBlock = block as? BlockquoteBlock {
+                BlockquoteView(block: quoteBlock)
             }
         }
     }
@@ -338,14 +349,21 @@ struct MarkdownTextView: View {
             .font(Typography.body)
             .foregroundColor(theme.primary)
             .lineSpacing(4)
+            .tint(theme.sky)
     }
 
     /// Parse inline markdown (bold, italic, code, links) into AttributedString
     private func parseInlineMarkdown(_ text: String) -> AttributedString {
-        // Try AttributedString's built-in markdown parsing
-        if let attributed = try? AttributedString(markdown: text, options: .init(
+        if var attributed = try? AttributedString(markdown: text, options: .init(
             interpretedSyntax: .inlineOnlyPreservingWhitespace
         )) {
+            // Style links with sky color
+            for run in attributed.runs {
+                if run.link != nil {
+                    let range = run.range
+                    attributed[range].underlineStyle = .single
+                }
+            }
             return attributed
         }
         return AttributedString(text)
@@ -381,6 +399,39 @@ struct ListBlockView: View {
         case .numbered: return "\(index + 1)."
         case .checkbox: return "[ ]"
         }
+    }
+}
+
+// MARK: - Blockquote
+
+struct BlockquoteView: View {
+    let block: BlockquoteBlock
+    @EnvironmentObject private var theme: ThemeEngine
+
+    var body: some View {
+        HStack(spacing: 0) {
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(theme.sand.opacity(0.5))
+                .frame(width: 3)
+
+            Text(parseInlineMarkdown(block.text))
+                .font(Typography.body)
+                .foregroundColor(theme.secondary)
+                .italic()
+                .lineSpacing(4)
+                .padding(.leading, 12)
+                .textSelection(.enabled)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func parseInlineMarkdown(_ text: String) -> AttributedString {
+        if let attributed = try? AttributedString(markdown: text, options: .init(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace
+        )) {
+            return attributed
+        }
+        return AttributedString(text)
     }
 }
 
@@ -513,5 +564,92 @@ struct ScrollPositionMonitor: NSViewRepresentable {
         deinit {
             NotificationCenter.default.removeObserver(self)
         }
+    }
+}
+
+// MARK: - Empty Response Warning
+
+/// Banner shown when Claude returns a near-empty response after a long delay — signals possible context loss
+struct EmptyResponseWarning: View {
+    var onRetry: () -> Void
+    var onNewSession: () -> Void
+    var onDismiss: () -> Void
+    @EnvironmentObject private var theme: ThemeEngine
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 14))
+                .foregroundColor(theme.sand)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Possible context loss detected")
+                    .font(Typography.bodyBold)
+                    .foregroundColor(theme.bright)
+                Text("Claude returned a near-empty response. Context may have been lost.")
+                    .font(Typography.caption)
+                    .foregroundColor(theme.secondary)
+            }
+
+            Spacer()
+
+            Button("Retry") { onRetry() }
+                .buttonStyle(.plain)
+                .font(Typography.caption)
+                .foregroundColor(theme.sky)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(theme.sky.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+
+            Button("New Session") { onNewSession() }
+                .buttonStyle(.plain)
+                .font(Typography.caption)
+                .foregroundColor(theme.sand)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(theme.sand.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+
+            Button { onDismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.muted)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(theme.sand.opacity(0.08))
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(theme.sand.opacity(0.3))
+                .frame(height: 1)
+        }
+    }
+}
+
+// MARK: - Compaction Toast
+
+/// Brief auto-dismissing toast shown when context compaction is detected
+struct CompactionToast: View {
+    let message: String
+    @EnvironmentObject private var theme: ThemeEngine
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.system(size: 12))
+                .foregroundColor(theme.sage)
+
+            Text(message)
+                .font(Typography.caption)
+                .foregroundColor(theme.bright)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(theme.sage.opacity(0.12))
+        .clipShape(Capsule())
+        .shadow(color: .black.opacity(0.2), radius: 6, y: 2)
     }
 }

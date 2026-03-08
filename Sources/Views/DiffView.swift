@@ -55,18 +55,8 @@ struct DiffView: View {
             .padding(.vertical, 6)
             .background(theme.codeBackground.opacity(0.5))
 
-            // Diff content
-            if sideBySide {
-                SideBySideDiffView(hunks: block.hunks)
-            } else {
-                ForEach(Array(block.hunks.enumerated()), id: \.offset) { _, hunk in
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(hunk.lines.enumerated()), id: \.offset) { _, line in
-                            DiffLineView(line: line)
-                        }
-                    }
-                }
-            }
+            // Diff content — auto-fallback to unified on narrow windows
+            DiffContentView(hunks: block.hunks, sideBySide: sideBySide)
         }
         .background(theme.codeBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -74,6 +64,36 @@ struct DiffView: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(theme.separator.opacity(0.3), lineWidth: 1)
         )
+    }
+}
+
+// MARK: - Diff Content (auto-fallback to unified on narrow windows)
+
+struct DiffContentView: View {
+    let hunks: [DiffHunk]
+    let sideBySide: Bool
+    @EnvironmentObject private var theme: ThemeEngine
+
+    var body: some View {
+        GeometryReader { geo in
+            let forceUnified = geo.size.width < 600
+            let useUnified = !sideBySide || forceUnified
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 0) {
+                    if !useUnified {
+                        SideBySideDiffView(hunks: hunks)
+                    } else {
+                        ForEach(Array(hunks.enumerated()), id: \.offset) { _, hunk in
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(Array(hunk.lines.enumerated()), id: \.offset) { _, line in
+                                    DiffLineView(line: line)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -3,6 +3,7 @@ import SwiftUI
 /// Help overlay (?) — quick reference for all keyboard shortcuts and features
 struct HelpOverlay: View {
     @EnvironmentObject private var theme: ThemeEngine
+    @EnvironmentObject private var process: ClaudeProcess
     @Binding var isPresented: Bool
 
     var body: some View {
@@ -31,6 +32,18 @@ struct HelpOverlay: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    if process.isVibeCoder {
+                        // Simplified help for vibe mode
+                        shortcutSection("Essentials", shortcuts: [
+                            ("Enter", "Send message"),
+                            ("Shift+Enter", "New line"),
+                            ("Ctrl+V", "Exit Vibe Mode"),
+                            ("Cmd+S", "Browse sessions"),
+                            ("Cmd+F", "Search conversation"),
+                            ("Cmd+L", "Clear conversation"),
+                            ("Escape", "Close overlays"),
+                        ])
+                    } else {
                     shortcutSection("Navigation", shortcuts: [
                         ("Cmd+K", "Command Palette"),
                         ("Cmd+F", "Search conversation"),
@@ -105,6 +118,8 @@ struct HelpOverlay: View {
                         featureRow("sun.min", "Luminance", "Continuous theme from midnight to paper. All colors adjust proportionally.")
                     }
                     .padding(.top, 4)
+
+                    } // end else (non-vibe mode)
                 }
                 .padding(16)
             }

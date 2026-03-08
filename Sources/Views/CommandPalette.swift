@@ -14,6 +14,30 @@ struct CommandPalette: View {
         return commands.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
     }
 
+    /// Group commands by category with section headers
+    private var groupedCommands: [(category: CommandCategory, items: [CommandItem])] {
+        let filtered = filteredCommands
+        var groups: [(CommandCategory, [CommandItem])] = []
+        var currentCategory: CommandCategory?
+        var currentItems: [CommandItem] = []
+
+        for item in filtered {
+            if item.category != currentCategory {
+                if let cat = currentCategory, !currentItems.isEmpty {
+                    groups.append((cat, currentItems))
+                }
+                currentCategory = item.category
+                currentItems = [item]
+            } else {
+                currentItems.append(item)
+            }
+        }
+        if let cat = currentCategory, !currentItems.isEmpty {
+            groups.append((cat, currentItems))
+        }
+        return groups
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Search field
@@ -44,13 +68,30 @@ struct CommandPalette: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 0) {
-                            ForEach(Array(filteredCommands.enumerated()), id: \.element.id) { idx, command in
-                                CommandRow(command: command, isSelected: idx == selectedIndex)
-                                    .id(command.id)
-                                    .onTapGesture {
-                                        command.action()
-                                        isPresented = false
+                            if searchText.isEmpty {
+                                // Grouped view with section headers
+                                ForEach(Array(groupedCommands.enumerated()), id: \.offset) { _, group in
+                                    CommandSectionHeader(category: group.category)
+                                    ForEach(group.items) { command in
+                                        let idx = filteredCommands.firstIndex(where: { $0.id == command.id }) ?? 0
+                                        CommandRow(command: command, isSelected: idx == selectedIndex)
+                                            .id(command.id)
+                                            .onTapGesture {
+                                                command.action()
+                                                isPresented = false
+                                            }
                                     }
+                                }
+                            } else {
+                                // Flat filtered view (no section headers when searching)
+                                ForEach(Array(filteredCommands.enumerated()), id: \.element.id) { idx, command in
+                                    CommandRow(command: command, isSelected: idx == selectedIndex)
+                                        .id(command.id)
+                                        .onTapGesture {
+                                            command.action()
+                                            isPresented = false
+                                        }
+                                }
                             }
                         }
                     }
@@ -96,6 +137,29 @@ struct CommandPalette: View {
         guard selectedIndex < filteredCommands.count else { return }
         filteredCommands[selectedIndex].action()
         isPresented = false
+    }
+}
+
+// MARK: - Section Header
+
+struct CommandSectionHeader: View {
+    let category: CommandCategory
+    @EnvironmentObject private var theme: ThemeEngine
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(category.label)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(category.color(theme))
+                .textCase(.uppercase)
+                .tracking(0.5)
+            Rectangle()
+                .fill(theme.separator.opacity(0.2))
+                .frame(height: 1)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
     }
 }
 
@@ -172,11 +236,20 @@ struct CommandItem: Identifiable {
     }
 }
 
-enum CommandCategory {
+enum CommandCategory: Equatable {
     case general
     case agent
     case view
     case session
+
+    var label: String {
+        switch self {
+        case .general: return "General"
+        case .agent: return "Agents"
+        case .view: return "View"
+        case .session: return "Session"
+        }
+    }
 
     @MainActor
     func color(_ theme: ThemeEngine) -> Color {

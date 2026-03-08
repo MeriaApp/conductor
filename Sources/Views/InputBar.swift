@@ -20,6 +20,11 @@ struct InputBar: View {
     @State private var slashMatches: [SlashSuggestion] = []
     @State private var selectedSlashIndex = 0
 
+    // File path autocomplete state
+    @State private var filePathMatches: [String] = []
+    @State private var selectedFilePathIndex = 0
+    @State private var filePathPrefix = ""
+
     // Message history (up/down arrow recall)
     @State private var messageHistory: [String] = []
     @State private var historyIndex: Int = -1
@@ -55,6 +60,20 @@ struct InputBar: View {
                         theme: theme,
                         onSelect: { suggestion in
                             insertSlashSuggestion(suggestion)
+                        }
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .zIndex(10)
+                }
+
+                // File path autocomplete popup
+                if !filePathMatches.isEmpty {
+                    FilePathAutocompletePopup(
+                        matches: filePathMatches,
+                        selectedIndex: selectedFilePathIndex,
+                        theme: theme,
+                        onSelect: { path in
+                            insertFilePathSuggestion(path)
                         }
                     )
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -112,6 +131,7 @@ struct InputBar: View {
                                 onSubmit: sendMessage,
                                 onTextChange: { newText in
                                     updateSlashSuggestions(for: newText)
+                                    updateFilePathSuggestions(for: newText)
                                 },
                                 onHeightChange: { height in
                                     textContentHeight = height
@@ -132,6 +152,11 @@ struct InputBar: View {
                                     }
                                 },
                                 onArrowUp: {
+                                    // File path autocomplete
+                                    if !filePathMatches.isEmpty {
+                                        selectedFilePathIndex = max(0, selectedFilePathIndex - 1)
+                                        return true
+                                    }
                                     // Slash autocomplete takes priority
                                     if !slashMatches.isEmpty {
                                         selectedSlashIndex = max(0, selectedSlashIndex - 1)
@@ -151,6 +176,10 @@ struct InputBar: View {
                                     return true
                                 },
                                 onArrowDown: {
+                                    if !filePathMatches.isEmpty {
+                                        selectedFilePathIndex = min(filePathMatches.count - 1, selectedFilePathIndex + 1)
+                                        return true
+                                    }
                                     if !slashMatches.isEmpty {
                                         selectedSlashIndex = min(slashMatches.count - 1, selectedSlashIndex + 1)
                                         return true
@@ -167,12 +196,20 @@ struct InputBar: View {
                                     return true
                                 },
                                 onTab: {
+                                    if !filePathMatches.isEmpty, selectedFilePathIndex < filePathMatches.count {
+                                        insertFilePathSuggestion(filePathMatches[selectedFilePathIndex])
+                                        return true
+                                    }
                                     guard !slashMatches.isEmpty,
                                           selectedSlashIndex < slashMatches.count else { return false }
                                     insertSlashSuggestion(slashMatches[selectedSlashIndex])
                                     return true
                                 },
                                 onEscape: {
+                                    if !filePathMatches.isEmpty {
+                                        filePathMatches = []
+                                        return true
+                                    }
                                     guard !slashMatches.isEmpty else { return false }
                                     slashMatches = []
                                     return true
@@ -228,6 +265,7 @@ struct InputBar: View {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !attachedImages.isEmpty else { return }
         slashMatches = []
+        filePathMatches = []
 
         // Build message with image attachments
         var message = text
@@ -325,6 +363,76 @@ struct InputBar: View {
     private func insertSlashSuggestion(_ suggestion: SlashSuggestion) {
         inputText = "/\(suggestion.name) "
         slashMatches = []
+    }
+
+    // MARK: - File Path Autocomplete
+
+    private func updateFilePathSuggestions(for text: String) {
+        // Find the last @path token being typed
+        guard let atRange = text.range(of: "@", options: .backwards) else {
+            filePathMatches = []
+            return
+        }
+
+        let afterAt = String(text[atRange.upperBound...])
+        // Only activate if typing a path (no spaces after @, and it looks like a path)
+        guard !afterAt.isEmpty,
+              !afterAt.contains(" "),
+              afterAt.count >= 2 else {
+            filePathMatches = []
+            return
+        }
+
+        filePathPrefix = "@" + afterAt
+        let expandedPath = (afterAt as NSString).expandingTildeInPath
+
+        let fm = FileManager.default
+        let dir: String
+        let partial: String
+
+        if expandedPath.hasSuffix("/") {
+            dir = expandedPath
+            partial = ""
+        } else {
+            dir = (expandedPath as NSString).deletingLastPathComponent
+            partial = (expandedPath as NSString).lastPathComponent.lowercased()
+        }
+
+        guard fm.fileExists(atPath: dir) else {
+            filePathMatches = []
+            return
+        }
+
+        do {
+            let contents = try fm.contentsOfDirectory(atPath: dir)
+            let matches = contents
+                .filter { partial.isEmpty || $0.lowercased().hasPrefix(partial) }
+                .sorted()
+                .prefix(8)
+                .map { item -> String in
+                    let fullPath = (dir as NSString).appendingPathComponent(item)
+                    var isDir: ObjCBool = false
+                    fm.fileExists(atPath: fullPath, isDirectory: &isDir)
+                    return isDir.boolValue ? fullPath + "/" : fullPath
+                }
+            filePathMatches = Array(matches)
+            selectedFilePathIndex = 0
+        } catch {
+            filePathMatches = []
+        }
+    }
+
+    private func insertFilePathSuggestion(_ path: String) {
+        // Replace the @partial with @fullPath
+        if let atRange = inputText.range(of: filePathPrefix, options: .backwards) {
+            inputText.replaceSubrange(atRange, with: "@\(path)")
+        }
+        // If path is a directory, keep suggestions open; otherwise close
+        if !path.hasSuffix("/") {
+            filePathMatches = []
+        } else {
+            updateFilePathSuggestions(for: inputText)
+        }
     }
 
     private static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "bmp", "svg"]
@@ -789,6 +897,63 @@ struct AttachmentThumbnail: View {
             .offset(x: 4, y: -4)
         }
         .help(url.lastPathComponent)
+    }
+}
+
+// MARK: - File Path Autocomplete Popup
+
+struct FilePathAutocompletePopup: View {
+    let matches: [String]
+    let selectedIndex: Int
+    let theme: ThemeEngine
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(matches.enumerated()), id: \.offset) { index, path in
+                        Button {
+                            onSelect(path)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: path.hasSuffix("/") ? "folder.fill" : "doc.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(path.hasSuffix("/") ? theme.sky : theme.muted)
+                                    .frame(width: 14)
+
+                                Text(shortenForDisplay(path))
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundColor(theme.primary)
+                                    .lineLimit(1)
+
+                                Spacer()
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(index == selectedIndex ? theme.sky.opacity(0.1) : Color.clear)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(maxHeight: 200)
+        }
+        .background(theme.elevated)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(theme.sky.opacity(0.2), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.3), radius: 10, y: -4)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 50)
+    }
+
+    private func shortenForDisplay(_ path: String) -> String {
+        let components = path.components(separatedBy: "/").filter { !$0.isEmpty }
+        if components.count <= 3 { return path }
+        return ".../" + components.suffix(3).joined(separator: "/") + (path.hasSuffix("/") ? "" : "")
     }
 }
 

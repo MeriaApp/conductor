@@ -19,36 +19,51 @@ final class ModelRouter: ObservableObject {
         guard isEnabled else { return nil }
 
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let wordCount = trimmed.components(separatedBy: .whitespaces).count
+        let wordCount = trimmed.components(separatedBy: .whitespaces).filter { !$0.isEmpty }.count
 
-        // Rule 1: Short simple lookups → Haiku (10x faster, equally accurate for simple tasks)
+        // Rule 1: Very short conversational messages → Haiku (acknowledgments, confirmations, corrections)
+        if wordCount <= 8 && isConversational(trimmed) {
+            return ModelSuggestion(
+                model: .haiku,
+                reason: "Short conversational message — Haiku is 10x cheaper",
+                confidence: 0.85
+            )
+        }
+
+        // Rule 2: Short simple lookups → Haiku (10x faster, equally accurate for simple tasks)
         if wordCount <= 20 && isSimpleLookup(trimmed) {
-            let suggestion = ModelSuggestion(
+            return ModelSuggestion(
                 model: .haiku,
                 reason: "Simple lookup — Haiku is 10x faster",
                 confidence: 0.75
             )
-            return suggestion.confidence > 0.7 ? suggestion : nil
         }
 
-        // Rule 2: High context pressure → Sonnet (handles compacted context efficiently)
+        // Rule 3: Medium-complexity questions without code work → Sonnet
+        if wordCount <= 30 && !isComplexWork(trimmed) && !isSimpleLookup(trimmed) {
+            return ModelSuggestion(
+                model: .sonnet,
+                reason: "General question — Sonnet handles this efficiently",
+                confidence: 0.72
+            )
+        }
+
+        // Rule 4: High context pressure → Sonnet (handles compacted context efficiently)
         if context.contextPercentage > 0.80 {
-            let suggestion = ModelSuggestion(
+            return ModelSuggestion(
                 model: .sonnet,
                 reason: "Context pressure — Sonnet handles compacted context well",
                 confidence: 0.72
             )
-            return suggestion.confidence > 0.7 ? suggestion : nil
         }
 
-        // Rule 3: Agent team spawning (3+ agents) → Sonnet for sub-agents
+        // Rule 5: Agent team spawning (3+ agents) → Sonnet for sub-agents
         if context.agentCount >= 3 && context.isSubAgent {
-            let suggestion = ModelSuggestion(
+            return ModelSuggestion(
                 model: .sonnet,
                 reason: "Parallel agents — Sonnet handles parallel work efficiently",
                 confidence: 0.75
             )
-            return suggestion.confidence > 0.7 ? suggestion : nil
         }
 
         // Default: Stay on Opus — the best model for architecture, reasoning, debugging, creative work
@@ -69,6 +84,34 @@ final class ModelRouter: ObservableObject {
     }
 
     // MARK: - Pattern Detection
+
+    /// Short conversational messages that don't need Opus-level reasoning
+    private func isConversational(_ message: String) -> Bool {
+        let patterns = [
+            "yes", "no", "ok", "okay", "sure", "go ahead", "do it",
+            "wait", "stop", "continue", "next", "skip", "done",
+            "thanks", "thank you", "got it", "perfect", "great",
+            "sounds good", "looks good", "lgtm", "ship it",
+            "go for it", "let's do it", "proceed", "yep", "nope",
+            "i meant", "i said", "never mind", "nvm",
+            "what's up", "what?", "why?", "how?", "huh",
+        ]
+        return patterns.contains { message.hasPrefix($0) || message == $0 }
+    }
+
+    /// Detects messages that require deep reasoning (architecture, debugging, multi-file changes)
+    private func isComplexWork(_ message: String) -> Bool {
+        let patterns = [
+            "refactor", "architect", "design", "implement", "build",
+            "debug", "fix", "investigate", "analyze", "optimize",
+            "rewrite", "restructure", "migrate", "upgrade",
+            "create a", "write a", "add a feature", "make a",
+            "deploy", "test", "audit", "review the",
+            "explain how", "help me understand", "walk me through",
+            "multi-file", "across the codebase", "all files",
+        ]
+        return patterns.contains { message.contains($0) }
+    }
 
     private func isSimpleLookup(_ message: String) -> Bool {
         let lookupPatterns = [

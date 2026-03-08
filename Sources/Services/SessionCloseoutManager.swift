@@ -30,8 +30,8 @@ final class SessionCloseoutManager: ObservableObject {
             return
         }
 
-        // Nothing to close out if no conversation happened
-        guard process.isRunning, !process.messages.isEmpty else {
+        // Nothing to close out if no real work happened
+        guard process.isRunning, process.hasSubstantiveWork else {
             completion()
             return
         }

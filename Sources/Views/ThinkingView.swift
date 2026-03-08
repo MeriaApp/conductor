@@ -5,6 +5,7 @@ struct ThinkingView: View {
     let block: ThinkingBlock
     @EnvironmentObject private var theme: ThemeEngine
     @State private var isCollapsed: Bool
+    @State private var copied = false
 
     init(block: ThinkingBlock) {
         self.block = block
@@ -40,6 +41,26 @@ struct ThinkingView: View {
                     Text("\(block.text.count) chars")
                         .font(Typography.caption)
                         .foregroundColor(theme.muted)
+
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(block.text, forType: .string)
+                        copied = true
+                        Task {
+                            try? await Task.sleep(for: .seconds(2))
+                            await MainActor.run { copied = false }
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                                .font(.system(size: 9))
+                            Text(copied ? "Copied" : "Copy")
+                                .font(Typography.caption)
+                        }
+                        .foregroundColor(copied ? theme.sage : theme.muted)
+                    }
+                    .buttonStyle(.plain)
+                    .opacity(copied ? 1 : 0.6)
                 }
             }
             .padding(.horizontal, 12)

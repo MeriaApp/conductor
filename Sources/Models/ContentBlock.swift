@@ -203,3 +203,15 @@ enum ListStyle {
     case numbered
     case checkbox
 }
+
+struct BlockquoteBlock: ContentBlockProtocol {
+    let id: String
+    var text: String
+
+    init(id: String = UUID().uuidString, text: String) {
+        self.id = id
+        self.text = text
+    }
+
+    func copyText() -> String { "> " + text.replacingOccurrences(of: "\n", with: "\n> ") }
+}

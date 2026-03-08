@@ -20,8 +20,7 @@ targets:
     platform: macOS
     sources:
       - Sources
-    resources:
-      - path: Resources/Assets.xcassets
+      - Resources/Assets.xcassets
     dependencies:
       - package: HighlightSwift
       - package: swift-markdown
@@ -34,12 +33,13 @@ targets:
         CODE_SIGN_IDENTITY: "-"
         ENABLE_HARDENED_RUNTIME: YES
         GENERATE_INFOPLIST_FILE: YES
-        MARKETING_VERSION: "2.1.0"
-        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: "3.0.0"
+        CURRENT_PROJECT_VERSION: 2
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 Meria. All rights reserved."
         SWIFT_VERSION: "5.0"
         COMBINE_HIDPI_IMAGES: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: Sources/Conductor.entitlements
     entitlements:
       path: Sources/Conductor.entitlements

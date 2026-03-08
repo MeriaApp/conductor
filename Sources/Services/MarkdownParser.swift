@@ -58,6 +58,25 @@ enum MarkdownParser {
                 continue
             }
 
+            // Blockquotes
+            if line.hasPrefix("> ") || line == ">" {
+                flushText(&currentText, into: &blocks)
+                var quoteLines: [String] = []
+                while i < lines.count {
+                    let l = lines[i]
+                    if l.hasPrefix("> ") {
+                        quoteLines.append(String(l.dropFirst(2)))
+                    } else if l == ">" {
+                        quoteLines.append("")
+                    } else {
+                        break
+                    }
+                    i += 1
+                }
+                blocks.append(BlockquoteBlock(text: quoteLines.joined(separator: "\n")))
+                continue
+            }
+
             // Unordered lists
             if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ") {
                 flushText(&currentText, into: &blocks)

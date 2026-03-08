@@ -50,6 +50,7 @@
 		B80676A76EAF2B2E9613B732 /* ThemeEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4F509A0262521DF7AFCD394 /* ThemeEngine.swift */; };
 		BBCF29246881C1332F5A577C /* MCPServerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AFE62927B4BAF218E5CD7C7 /* MCPServerManager.swift */; };
 		BC0476199B4051275BEF7E96 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E438C348E4B261AA32994C19 /* OnboardingView.swift */; };
+		C49BF83D83D8E0DCAF9F653A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A05518B0DF23695453BB9480 /* Assets.xcassets */; };
 		C77DE8474FCC952BFCF9B618 /* SessionBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10A85F8EC26D5FBD28E32090 /* SessionBrowser.swift */; };
 		C7D21068770ADB6F972E2C0C /* MarkdownParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19340A104A8DB73C6FCA2318 /* MarkdownParser.swift */; };
 		CD3107753D9AFC0E6553F9E5 /* ClaudeProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECC4C154413B5B1B124A7EA3 /* ClaudeProcess.swift */; };
@@ -120,6 +121,7 @@
 		9744F81FD2CC63A29E04B89B /* ContextStateManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextStateManager.swift; sourceTree = "<group>"; };
 		9CF5EE35805E207CB2DBD9DA /* AgentOrchestrator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentOrchestrator.swift; sourceTree = "<group>"; };
 		9E5E03ABE4C21A9BC4A33E52 /* DashboardPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardPanel.swift; sourceTree = "<group>"; };
+		A05518B0DF23695453BB9480 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A14D58BB3AD3E7C4C99C7A68 /* SessionStateContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStateContainer.swift; sourceTree = "<group>"; };
 		B247FD56B1C6AC0512EC13FC /* Agent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Agent.swift; sourceTree = "<group>"; };
 		B4057B0D3533A6A2D615E300 /* SoundManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SoundManager.swift; sourceTree = "<group>"; };
@@ -169,6 +171,7 @@
 		5ECD817E09D3A8CBBF8971EC = {
 			isa = PBXGroup;
 			children = (
+				9664BF10F366B5E419664939 /* Resources */,
 				9BF0373112A81FEF22D7AB8B /* Sources */,
 				90DB0DC41DFD7CB77107A730 /* Products */,
 			);
@@ -250,6 +253,14 @@
 			path = Views;
 			sourceTree = "<group>";
 		};
+		9664BF10F366B5E419664939 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				A05518B0DF23695453BB9480 /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		9BF0373112A81FEF22D7AB8B /* Sources */ = {
 			isa = PBXGroup;
 			children = (
@@ -285,6 +296,7 @@
 			buildConfigurationList = 0FC66D382DBDD4D862E86C7C /* Build configuration list for PBXNativeTarget "Conductor" */;
 			buildPhases = (
 				5014C51B3C55F06269359607 /* Sources */,
+				2F981A38394C6CB2E7104CC6 /* Resources */,
 				4D37CE518EE2FC2C9B71EE7F /* Frameworks */,
 			);
 			buildRules = (
@@ -337,6 +349,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		2F981A38394C6CB2E7104CC6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C49BF83D83D8E0DCAF9F653A /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		5014C51B3C55F06269359607 /* Sources */ = {
@@ -484,7 +507,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -494,7 +517,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.1.0;
+				MARKETING_VERSION = 3.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.meria.conductor;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.0;
@@ -509,7 +532,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -519,7 +542,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.1.0;
+				MARKETING_VERSION = 3.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.meria.conductor;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.0;

@@ -11,42 +11,88 @@ This is the **distributable version** of Conductor, forked from the original at 
 
 ---
 
-## Current State: v1.0.0 RELEASED + Post-Release Improvements
+## Current State: v3.0.0 — Invisible Intelligence Made Visible (Mar 8, 2026)
 
-- GitHub release live at `https://github.com/MeriaApp/conductor/releases/tag/v1.0.0`
-- Signed with Developer ID Application cert (Jesse's)
-- NOT notarized yet — users need to right-click > Open first time
+**Previous release:** v2.2.0 — smart cost controls
 
-### Changes Since v1.0.0 (not yet released)
+### v3.0.0 Changes (4 Items from CONDUCTOR_V3_PLAN.md)
 
-**Bloat Removed (7 files deleted):**
-- MoodBoardEngine + MoodBoardView + MoodBoard model — design moodboard nobody used
-- EvolutionAgent — "self-improvement engine" that ran background timers for nothing
-- SharedIntelligence — cross-project knowledge registry, cool concept, zero practical value
-- FeatureDetector + FeatureMapOverlay — meta-UI about the app's own features
-- All references cleaned from AppShell, ConductorApp, SessionStateContainer, ProjectSwitcher
+1. **Savings Tracker** (`ClaudeProcess.swift`, `StatusBar.swift`) — DONE.
+2. **Compaction Toast** (`ContextPreservationPipeline.swift`, `ConversationView.swift`, `AppShell.swift`) — DONE.
+3. **Status Bar Simplification** (`StatusBar.swift`) — DONE.
+4. **Multi-Agent Workflow Presets** (`AgentOrchestrator.swift`, `AppShell.swift`) — DONE.
+5. **Direct API Backend** — DEFERRED to separate session.
 
-**Features Added:**
-- Smart auto-scroll — locks to bottom during streaming, stays put when user scrolls up, magnets back when user scrolls to bottom. "Jump to bottom" button when scrolled up.
-- Up-arrow message history — press up/down to recall previous messages (like Terminal)
-- Input placeholder text — "Message Claude..." shown in normal mode (vibe mode shows "What do you want to build?")
-- macOS notification when Claude finishes in background — if app is unfocused, notification banner appears
-- Clipboard image paste (Cmd+V screenshots) — auto-converts TIFF to PNG
-- Image attachment strip — drag/drop images appear as thumbnails, not inline text
-- Dynamic input bar height — starts compact, grows with content, max 200px
-- Window naming — click tag icon in status bar to label windows
-- Smaller minimum window size (480x300, down from 700x500)
-- TemplateScaffolder — auto-scaffolds optimized ~/.claude/ (user-level) and .claude/ (project-level) with rules + skills
-  - User-level: CLAUDE.md + rules/coding-standards.md + rules/git-workflow.md (created on first run + onboarding)
-  - Project-level: CLAUDE.md, CONTEXT_STATE.md, rules/anti-patterns.md, rules/verification.md, skills/debug, skills/audit, skills/release (prompted when opening a new directory)
-  - Never overwrites existing files
-- Removed redundant Resources/Templates/ directory (content embedded in TemplateScaffolder.swift)
-- Updated CLAUDE.md to reflect actual file structure (removed 7 deleted file references)
-- Text selection — `.textSelection(.enabled)` moved to LazyVStack container level for cross-paragraph drag selection
-- Status bar cleanup — removed Cmd+K hint, "? for help", empty Name placeholder, removed dividers between right-side controls, tightened spacing (16→10), fixed model suggestion pill overflow (dropped reason text, lineLimit+fixedSize)
-- Terminal-style title bar — shows "folder — model — Conductor" instead of just "Conductor"
-- WelcomeView cleaned — removed Feature Map and Moodboard from feature grid (deleted features)
-- v1.1.0 build installed to /Applications/Conductor v1.1.app
+### v3.0.0 Terminal Parity Audit (10 Items from CONDUCTOR_AUDIT_PLAN.md)
+
+1. **Blockquote rendering** — `MarkdownParser.swift`, `ContentBlock.swift`, `ConversationView.swift`. New `BlockquoteBlock` type with sand left-bar styling.
+2. **Line numbers in code blocks** — `CodeBlockView.swift`, `Typography.swift`. Gutter with line numbers for multi-line blocks.
+3. **Luminance-aware code theme** — `CodeBlockView.swift`. Switches atomOne↔xcode at luminance 0.6.
+4. **Copy buttons** — `ToolUseView.swift`, `ThinkingView.swift`. Copy button on expanded tool output and thinking blocks.
+5. **Search highlighting** — `ConversationView.swift`. Sky-blue left-edge bar on matched messages.
+6. **Streaming optimization** — `ClaudeProcess.swift`. In-place block update instead of message rebuild.
+7. **Centralized Escape** — `AppShell.swift`. Single handler dismisses topmost overlay.
+8. **Process timeout** — `ClaudeProcess.swift`. 5-minute watchdog kills hung processes.
+9. **Stderr surfacing** — `ClaudeProcess.swift`. `lastStderrMessage` published property.
+10. **File path autocomplete** — `InputBar.swift`. Type `@/path` for filesystem completion with Tab/Esc.
+
+### v3.0.0 Polish Pass (7 Additional Items)
+
+A. **Diff auto-fallback** — `DiffView.swift`. GeometryReader auto-switches to unified view below 600px width.
+B. **Session preview** — `SessionBrowser.swift`. 2-line summary, "View Only" for sessions without active session.
+C. **Command palette sections** — `CommandPalette.swift`. Grouped by category with section headers when not searching.
+D. **Clickable markdown links** — `ConversationView.swift`. `.tint(theme.sky)` + underline on link runs.
+E. **Vibe mode consistency** — `WelcomeView.swift`, `HelpOverlay.swift`. Simplified views in vibe mode.
+F. **Git ahead/behind** — `AppShell.swift`. Shows "+2/-1" next to branch name via `git rev-list --left-right --count`.
+G. **Terminal passthrough bar** — Already existed (`AppShell.swift:1831`). Ctrl+T opens command bar.
+
+### v2.2.0 Changes (5 Smart Cost Controls)
+
+**Problem:** $16.62 for a single session. Effort always "high", no budget cap, model router too conservative, no visibility into per-turn cost, no context loss detection.
+
+**Changes:**
+1. **Smart Effort Routing** (`ClaudeProcess.swift`) — Default changed from `high` to `medium`. New `SmartEffortRouter` auto-classifies messages: conversational→low, general→medium, complex work→high. Toggle "Smart (Auto)" in effort picker. ~30-50% token reduction.
+2. **Default $5 Budget Cap** (`ClaudeProcess.swift`) — `maxBudgetUSD` changed from 0 (unlimited) to 5.0. Budget options: $5, $10, $25, $50, unlimited. Always visible in status bar.
+3. **Expanded ModelRouter** (`ModelRouter.swift`) — Added conversational message detection (Haiku for "yes", "go ahead", "wait" etc). Added medium-complexity routing to Sonnet. Much more aggressive downgrading for non-code messages. ~10-20% cost savings.
+4. **Empty Response Detection** (`ClaudeProcess.swift`, `ConversationView.swift`, `AppShell.swift`) — Detects <10 char response after >5s delay. Shows warning banner with Retry / New Session / Dismiss options. Catches context loss like the bug in the screenshot.
+5. **Per-Turn Cost Display** (`StatusBar.swift`, `ClaudeProcess.swift`) — Shows `(+$0.XX)` next to session total. Turns >$0.50 highlighted in rose. Gives real-time visibility into which messages are expensive.
+
+**Files changed:**
+- `Sources/Services/ClaudeProcess.swift` — SmartEffortRouter, default budget, lastTurnCostUSD, lastUserMessage, onEmptyResponse callback, smartEffort toggle
+- `Sources/Services/ModelRouter.swift` — isConversational(), isComplexWork(), expanded routing rules
+- `Sources/Views/StatusBar.swift` — per-turn cost display, smart effort picker with Auto toggle, always-visible budget
+- `Sources/Views/ConversationView.swift` — EmptyResponseWarning view
+- `Sources/Views/AppShell.swift` — wired onEmptyResponse, empty response warning state, budget cycling updated
+
+**Build:** SUCCEEDED (ad-hoc signed)
+**Not yet:** committed, pushed, released, installed
+
+### v2.1.0 Changes (10 Token Optimizations + 2 UX Fixes)
+
+**Token Efficiency (all 10 applied):**
+1. `ContextStateManager.swift` — Fixed context % to use per-turn input tokens (was using meaningless cumulative totals)
+2. `SessionCloseoutManager.swift` — Removed wasteful Claude round-trip on session close (~160K tokens saved/session)
+3. `AppShell.swift` — Trimmed system prompt from ~700 to ~150 tokens
+4. `AppShell.swift` — Deduplicated pinned message injection (only on change or post-compaction)
+5. `CompactionEngine.swift` — Removed post-compaction acknowledge round-trip
+6. `ContextPreservationPipeline.swift` — Stopped tracking Read tool calls as file modifications
+7. `ModelRouter.swift` — Enabled auto-routing by default (Haiku for simple lookups)
+8. `AgentOrchestrator.swift` — Sub-agents inherit optimizations from main process
+9. `ClaudeProcess.swift` — Capped events array at 200 entries
+10. `PerformanceDashboard.swift` — Wired ContextBudgetOptimizer suggestions into UI
+
+**UX Fixes:**
+- `InputBar.swift` — Fixed multiline cursor: enabled overlay scroller so all lines are clickable
+- `InputBar.swift` — File drop spacing: `\n\n` blank lines before/after `@path` for visual separation (drag-drop, paste, onFileDrop callback)
+
+### Previous Changes (v1.0.0 → v1.1.0, still included)
+
+- Bloat removed (7 files: MoodBoard, EvolutionAgent, SharedIntelligence, FeatureDetector)
+- Smart auto-scroll, up-arrow message history, input placeholder text
+- macOS notification on background completion, clipboard image paste
+- Image attachment strip, dynamic input bar height, window naming
+- TemplateScaffolder, text selection, status bar cleanup, terminal-style title bar
+- v1.1.0 build was installed to /Applications/Conductor v1.1.app
 
 **Still on roadmap:**
 - App icon (still default Xcode globe)
@@ -171,6 +217,10 @@ Apple Distribution: JESSE ROBERT MERIA (36D97ZTP6J)
 ## Build Status
 - **Compiles:** YES (BUILD SUCCEEDED)
 - **Signed:** YES (Developer ID Application)
-- **Released:** v1.0.0 on GitHub
-- **Post-release changes:** Built and verified, not yet released
-- **Notarized:** No (future work)
+- **Version:** 3.0.0
+- **Released on GitHub:** v1.0.0 only — v2.1.0/v2.2.0/v3.0.0 committed but not pushed/released
+- **Installed:** /Applications/Conductor.app (v3.0.0)
+- **Desktop zip:** ~/Desktop/Conductor.zip (v3.0.0, Developer ID signed, 2.5MB)
+- **Notarized:** YES (Mar 8, 2026). Keychain profile: `"Conductor"`. Gatekeeper: accepted, source=Notarized Developer ID.
+- **Notarize command:** `xcrun notarytool submit app.zip --keychain-profile "Conductor" --wait && xcrun stapler staple Conductor.app`
+- **Build flags for notarization:** `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO OTHER_CODE_SIGN_FLAGS="--options=runtime --timestamp"`

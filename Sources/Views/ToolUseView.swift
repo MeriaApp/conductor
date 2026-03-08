@@ -6,6 +6,7 @@ struct ToolUseView: View {
     var onFilePathTap: ((String) -> Void)?
     @EnvironmentObject private var theme: ThemeEngine
     @State private var isExpanded: Bool
+    @State private var copied = false
 
     init(block: ToolUseBlock, onFilePathTap: ((String) -> Void)? = nil) {
         self.block = block
@@ -76,13 +77,38 @@ struct ToolUseView: View {
 
             // Expanded output
             if isExpanded, let output = block.output {
-                Text(stripXMLTags(output))
-                    .font(Typography.codeBlock)
-                    .foregroundColor(block.isError ? theme.rose.opacity(0.85) : theme.secondary)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 8)
-                    .padding(.leading, 20) // Indent under status icon
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Spacer()
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(stripXMLTags(output), forType: .string)
+                            copied = true
+                            Task {
+                                try? await Task.sleep(for: .seconds(2))
+                                await MainActor.run { copied = false }
+                            }
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                                    .font(.system(size: 9))
+                                Text(copied ? "Copied" : "Copy")
+                                    .font(Typography.caption)
+                            }
+                            .foregroundColor(copied ? theme.sage : theme.muted)
+                        }
+                        .buttonStyle(.plain)
+                        .opacity(copied ? 1 : 0.6)
+                    }
+
+                    Text(stripXMLTags(output))
+                        .font(Typography.codeBlock)
+                        .foregroundColor(block.isError ? theme.rose.opacity(0.85) : theme.secondary)
+                        .textSelection(.enabled)
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+                .padding(.leading, 20)
             }
         }
         .background(theme.toolBackground.opacity(0.5))

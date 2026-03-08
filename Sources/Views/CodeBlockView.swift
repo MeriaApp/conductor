@@ -41,10 +41,33 @@ struct CodeBlockView: View {
             .padding(.vertical, 6)
             .background(theme.codeBackground.opacity(0.5))
 
-            // Code content with syntax highlighting
-            CodeHighlightView(code: block.code, language: block.language)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+            // Code content with line numbers + syntax highlighting
+            HStack(alignment: .top, spacing: 0) {
+                // Line numbers gutter
+                let lineCount = block.code.components(separatedBy: "\n").count
+                if lineCount > 1 {
+                    VStack(alignment: .trailing, spacing: 0) {
+                        ForEach(1...lineCount, id: \.self) { num in
+                            Text("\(num)")
+                                .font(Typography.codeBlock)
+                                .foregroundColor(theme.muted.opacity(0.4))
+                                .frame(height: Typography.codeLineHeight)
+                        }
+                    }
+                    .padding(.leading, 12)
+                    .padding(.trailing, 8)
+                    .padding(.vertical, 10)
+
+                    Rectangle()
+                        .fill(theme.separator.opacity(0.15))
+                        .frame(width: 1)
+                        .padding(.vertical, 6)
+                }
+
+                CodeHighlightView(code: block.code, language: block.language)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+            }
         }
         .background(theme.codeBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -71,16 +94,21 @@ struct CodeHighlightView: View {
     let language: String?
     @EnvironmentObject private var theme: ThemeEngine
 
+    /// Pick theme based on luminance: dark themes for dark mode, light themes for light mode
+    private var codeTheme: HighlightTheme {
+        theme.luminance > 0.6 ? .xcode : .atomOne
+    }
+
     var body: some View {
         if let hlLang = resolveLanguage(language) {
             CodeText(code)
                 .highlightLanguage(hlLang)
-                .codeTextColors(.theme(.atomOne))
+                .codeTextColors(.theme(codeTheme))
                 .codeTextStyle(.plain)
                 .font(Typography.codeBlock)
         } else {
             CodeText(code)
-                .codeTextColors(.theme(.atomOne))
+                .codeTextColors(.theme(codeTheme))
                 .codeTextStyle(.plain)
                 .font(Typography.codeBlock)
         }

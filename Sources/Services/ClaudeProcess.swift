@@ -51,6 +51,18 @@ final class ClaudeProcess: ObservableObject {
     private let maxRetries = 2
     private var lastPrompt: String?
 
+    /// Watchdog: kills hung processes after timeout
+    private var watchdogTask: Task<Void, Never>?
+    private static let processTimeoutSeconds: TimeInterval = 300 // 5 minutes
+
+    /// Stderr output (surfaced to UI instead of hidden)
+    @Published var lastStderrMessage: String?
+
+    /// Pending savings multiplier from effort/model routing (applied when turn cost arrives)
+    var _pendingSavingsMultiplier: Double = 0
+    /// Pending model savings multiplier (Opus→Sonnet = 0.80, Opus→Haiku = 0.95)
+    var _pendingModelSavings: Double = 0
+
     /// Path to claude CLI
     private let claudePath: String
 
@@ -61,14 +73,22 @@ final class ClaudeProcess: ObservableObject {
     var systemPrompt: String?
 
     /// CLI configuration flags
-    @Published var effortLevel: EffortLevel = .high
+    @Published var effortLevel: EffortLevel = .medium
+    /// When true, effort level auto-adjusts per message complexity (default on)
+    @Published var smartEffort: Bool = true
     @Published var permissionMode: CLIPermissionMode = .bypassPermissions
     @Published var useWorktree: Bool = false
     @Published var outputMode: OutputMode = .standard
     @Published var selectedModel: ModelChoice?
 
-    /// Max budget in USD (0 = unlimited)
-    var maxBudgetUSD: Double = 0
+    /// Max budget in USD per session (default $5 — prevents runaway sessions)
+    var maxBudgetUSD: Double = 5.0
+
+    /// Per-turn cost of the most recent turn (for display)
+    @Published var lastTurnCostUSD: Double = 0
+
+    /// Estimated cumulative savings from smart effort + model routing
+    @Published var estimatedSavingsUSD: Double = 0
 
     /// Callbacks for service integration
     var onResult: ((ResultEvent) -> Void)?
@@ -78,6 +98,25 @@ final class ClaudeProcess: ObservableObject {
     var onAssistantText: ((String) -> Void)?    // Full text of each assistant turn
     var onTurnComplete: ((TurnMetrics) -> Void)? // Per-turn metrics (for compaction detection)
     var onBeforeSend: ((String) -> String)?     // Transform message before sending (for reinjection)
+    var onEmptyResponse: (() -> Void)?           // Fires when Claude returns near-empty response (context loss signal)
+
+    /// Last user message text (for retry on empty response)
+    var lastUserMessage: String? {
+        messages.last(where: { $0.role == .user })?.copyText()
+    }
+
+    /// Whether any real work happened — tool use (file edits, bash, etc.) or 4+ message exchanges.
+    /// Used to skip closeout ceremony for trivial/empty sessions.
+    var hasSubstantiveWork: Bool {
+        guard !messages.isEmpty else { return false }
+        // Any tool use = real work
+        let hasToolUse = messages.contains { msg in
+            msg.blocks.contains { $0 is ToolUseBlock }
+        }
+        if hasToolUse { return true }
+        // 4+ messages = enough conversation to be worth saving
+        return messages.count >= 4
+    }
 
     init(claudePath: String? = nil) {
         if let path = claudePath {
@@ -116,6 +155,18 @@ final class ClaudeProcess: ObservableObject {
         // Reset retry state for new user message
         retryCount = 0
         lastPrompt = text
+
+        // Smart effort: auto-adjust effort level based on message complexity
+        if smartEffort {
+            let routed = SmartEffortRouter.classify(text)
+            effortLevel = routed
+            // Track savings: effort downgrade from high baseline
+            switch routed {
+            case .low: _pendingSavingsMultiplier = 0.50  // ~50% cheaper than high
+            case .medium: _pendingSavingsMultiplier = 0.30  // ~30% cheaper than high
+            case .high: _pendingSavingsMultiplier = 0.0
+            }
+        }
 
         // Add user message to conversation (show original text)
         let userMessage = ConversationMessage(
@@ -247,6 +298,8 @@ final class ClaudeProcess: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.isStreaming = false
+                self.watchdogTask?.cancel()
+                self.watchdogTask = nil
                 self.finalizeStreamingMessage()
                 self.currentProcess = nil
 
@@ -273,6 +326,7 @@ final class ClaudeProcess: ObservableObject {
             try proc.run()
             startReadingOutput(from: stdout)
             startReadingErrors(from: stderr)
+            startWatchdog()
         } catch {
             self.error = "Failed to launch Claude CLI: \(error.localizedDescription)"
             isStreaming = false
@@ -310,15 +364,37 @@ final class ClaudeProcess: ObservableObject {
     private func startReadingErrors(from pipe: Pipe) {
         Task.detached { [weak self] in
             let handle = pipe.fileHandleForReading
+            var accumulated = ""
             while !Task.isCancelled {
                 let data = handle.availableData
                 if data.isEmpty { break }
                 if let text = String(data: data, encoding: .utf8) {
+                    accumulated += text
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                     await MainActor.run {
-                        print("[Claude stderr] \(text)")
-                        _ = self // keep reference alive
+                        print("[Claude stderr] \(trimmed)")
+                        // Surface meaningful errors (skip progress/debug noise)
+                        if !trimmed.isEmpty && !trimmed.hasPrefix("Downloading") && !trimmed.hasPrefix("  ") {
+                            self?.lastStderrMessage = String(trimmed.prefix(200))
+                        }
                     }
                 }
+            }
+        }
+    }
+
+    /// Kill the process if it runs longer than the timeout
+    private func startWatchdog() {
+        watchdogTask?.cancel()
+        watchdogTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.processTimeoutSeconds))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self, self.isStreaming else { return }
+                let msg = "Process timed out after \(Int(Self.processTimeoutSeconds))s"
+                self.error = msg
+                self.onError?(msg)
+                self.currentProcess?.terminate()
             }
         }
     }
@@ -425,6 +501,13 @@ final class ClaudeProcess: ObservableObject {
         if !fullText.isEmpty {
             onAssistantText?(fullText)
         }
+
+        // Empty response detection — signal possible context loss
+        let responseLength = fullText.trimmingCharacters(in: .whitespacesAndNewlines).count
+        let elapsed = streamStartTime.map { Date().timeIntervalSince($0) } ?? 0
+        if responseLength < 10 && elapsed > 5 {
+            onEmptyResponse?()
+        }
     }
 
     private func handleToolResult(_ event: UserEvent) {
@@ -479,7 +562,15 @@ final class ClaudeProcess: ObservableObject {
         totalOutputTokens += thisTurnOutput
 
         if let cost = event.totalCostUSD {
+            lastTurnCostUSD = cost
             totalCostUSD += cost
+            // Apply pending savings estimate
+            let savingsMultiplier = max(_pendingSavingsMultiplier, _pendingModelSavings)
+            if savingsMultiplier > 0 {
+                estimatedSavingsUSD += cost * savingsMultiplier / (1.0 - savingsMultiplier)
+            }
+            _pendingSavingsMultiplier = 0
+            _pendingModelSavings = 0
         }
         // Update session ID from result (should match system event)
         if let sid = event.sessionId {
@@ -550,23 +641,31 @@ final class ClaudeProcess: ObservableObject {
     }
 
     private func updateStreamingMessage() {
-        guard var msg = streamingMessage else { return }
+        guard let msg = streamingMessage else { return }
 
-        var blocks: [any ContentBlockProtocol] = []
-        if let thinking = streamingThinkingBlock {
-            blocks.append(thinking)
-        }
-        if let text = streamingTextBlock {
-            blocks.append(text)
-        }
-        msg.blocks = blocks
-
-        // Update or append the streaming message
+        // Find or append the streaming message
         if let lastIdx = messages.indices.last,
            messages[lastIdx].role == .assistant && messages[lastIdx].isStreaming {
-            messages[lastIdx] = msg
+            // Update blocks in-place instead of rebuilding the entire array
+            var blocks: [any ContentBlockProtocol] = []
+            if let thinking = streamingThinkingBlock {
+                blocks.append(thinking)
+            }
+            if let text = streamingTextBlock {
+                blocks.append(text)
+            }
+            messages[lastIdx].blocks = blocks
         } else {
-            messages.append(msg)
+            var newMsg = msg
+            var blocks: [any ContentBlockProtocol] = []
+            if let thinking = streamingThinkingBlock {
+                blocks.append(thinking)
+            }
+            if let text = streamingTextBlock {
+                blocks.append(text)
+            }
+            newMsg.blocks = blocks
+            messages.append(newMsg)
         }
     }
 
@@ -685,6 +784,62 @@ enum CLIPermissionMode: String, CaseIterable {
         case .bypassPermissions: return "No permission checks"
         case .plan: return "Plan mode — suggest, don't execute"
         }
+    }
+}
+
+/// Smart effort routing — classifies message complexity to pick the right effort level
+/// Saves 30-50% tokens by not using high effort for simple/conversational messages
+enum SmartEffortRouter {
+
+    /// Classify a user message into the appropriate effort level
+    static func classify(_ message: String) -> EffortLevel {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowered = trimmed.lowercased()
+        let wordCount = trimmed.components(separatedBy: .whitespaces).filter { !$0.isEmpty }.count
+
+        // Very short conversational messages → low effort
+        if wordCount <= 5 && isConversational(lowered) {
+            return .low
+        }
+
+        // Short messages without code keywords → medium
+        if wordCount <= 15 && !containsComplexWork(lowered) {
+            return .medium
+        }
+
+        // Complex work patterns → high effort
+        if containsComplexWork(lowered) {
+            return .high
+        }
+
+        // Default: medium for everything else
+        return .medium
+    }
+
+    private static func isConversational(_ message: String) -> Bool {
+        let patterns = [
+            "yes", "no", "ok", "okay", "sure", "go ahead", "do it",
+            "wait", "stop", "continue", "next", "skip", "done",
+            "thanks", "thank you", "got it", "perfect", "great",
+            "what?", "why?", "how?", "really?", "huh",
+            "i meant", "i said", "never mind", "nvm",
+            "sounds good", "looks good", "lgtm", "ship it",
+            "go for it", "let's do it", "proceed", "yep", "nope",
+        ]
+        return patterns.contains { message.hasPrefix($0) || message == $0 }
+    }
+
+    private static func containsComplexWork(_ message: String) -> Bool {
+        let patterns = [
+            "refactor", "architect", "design", "implement", "build",
+            "debug", "fix", "investigate", "analyze", "optimize",
+            "rewrite", "restructure", "migrate", "upgrade",
+            "create a", "write a", "add a feature", "make a",
+            "deploy", "test", "audit", "review",
+            "explain how", "help me understand", "walk me through",
+            "multi-file", "across the codebase", "all files",
+        ]
+        return patterns.contains { message.contains($0) }
     }
 }
 

@@ -46,6 +46,9 @@ enum Typography {
     /// Code block content
     static var codeBlock: Font { .system(size: 12.5 * s, design: .monospaced) }
 
+    /// Line height for code blocks (for line number alignment)
+    static var codeLineHeight: CGFloat { 18 * s }
+
     /// Small metadata in code blocks (language label, line numbers)
     static var codeMeta: Font { .system(size: 10.5 * s, design: .monospaced) }
 

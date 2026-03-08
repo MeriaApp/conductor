@@ -222,16 +222,13 @@ struct SessionRow: View {
                         .foregroundColor(theme.muted)
                 }
 
-                // Summary (auto-generated on session end)
-                if let summary = session.summary {
+                // Summary or project path (preview)
+                if let summary = session.summary, !summary.isEmpty {
                     Text(summary)
                         .font(Typography.caption)
                         .foregroundColor(theme.muted)
-                        .lineLimit(1)
-                }
-
-                // Project path
-                if let path = session.projectPath {
+                        .lineLimit(2)
+                } else if let path = session.projectPath {
                     Text(shortenPath(path))
                         .font(Typography.caption)
                         .foregroundColor(theme.muted)
@@ -247,7 +244,7 @@ struct SessionRow: View {
                     .font(.system(size: 11))
                     .foregroundColor(theme.sky.opacity(isSelected ? 1 : 0.5))
             } else {
-                Text("no session")
+                Text("View Only")
                     .font(Typography.caption)
                     .foregroundColor(theme.muted.opacity(0.5))
             }

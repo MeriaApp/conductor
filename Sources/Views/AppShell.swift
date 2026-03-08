@@ -54,6 +54,10 @@ struct AppShell: View {
     @State private var pendingScaffoldURL: URL?
     /// Track which pinned message IDs were already sent — avoid resending every turn
     @State private var lastSentPinnedIds: Set<String> = []
+    /// Empty response warning — possible context loss
+    @State private var showEmptyResponseWarning = false
+    /// Compaction toast — shows briefly when context is compacted
+    @State private var compactionToastMessage: String?
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -110,6 +114,34 @@ struct AppShell: View {
                             .padding(.top, 8)
                             .transition(.move(edge: .top).combined(with: .opacity))
                         }
+
+                        // Compaction toast — auto-dismisses after 4s
+                        if let toast = compactionToastMessage {
+                            CompactionToast(message: toast)
+                                .padding(.top, 8)
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                                .animation(.easeOut(duration: 0.3), value: compactionToastMessage)
+                        }
+                    }
+
+                    // Empty response warning — possible context loss
+                    if showEmptyResponseWarning {
+                        EmptyResponseWarning(
+                            onRetry: {
+                                showEmptyResponseWarning = false
+                                if let lastPrompt = process.lastUserMessage {
+                                    process.send(lastPrompt)
+                                }
+                            },
+                            onNewSession: {
+                                showEmptyResponseWarning = false
+                                startNewSession()
+                            },
+                            onDismiss: {
+                                showEmptyResponseWarning = false
+                            }
+                        )
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
 
                     InputBar(
@@ -458,6 +490,38 @@ struct AppShell: View {
             Button("Skip", role: .cancel) {}
         } message: {
             Text("Conductor can create optimized .claude/ rules and skills for this project. This won't overwrite any existing files.")
+        }
+        // Centralized Escape — dismiss topmost overlay in priority order
+        .onKeyPress(.escape) {
+            if showCommandPalette {
+                withAnimation(.easeOut(duration: 0.15)) { showCommandPalette = false }
+                return .handled
+            }
+            if showSearchBar {
+                withAnimation(.easeOut(duration: 0.15)) { showSearchBar = false; searchText = ""; currentSearchMatchIndex = 0 }
+                return .handled
+            }
+            if showHelp {
+                withAnimation(.easeOut(duration: 0.15)) { showHelp = false }
+                return .handled
+            }
+            if showSessionBrowser {
+                withAnimation(.easeOut(duration: 0.15)) { showSessionBrowser = false }
+                return .handled
+            }
+            if showContextOverlay {
+                showContextOverlay = false
+                return .handled
+            }
+            if showMultiAgentView {
+                withAnimation(.easeOut(duration: 0.15)) { showMultiAgentView = false }
+                return .handled
+            }
+            if showPerformance {
+                withAnimation(.easeOut(duration: 0.15)) { showPerformance = false }
+                return .handled
+            }
+            return .ignored
         }
         // Luminance (Cmd+[ / Cmd+])
         .onKeyPress(characters: CharacterSet(charactersIn: "["), phases: .down) { press in
@@ -860,9 +924,36 @@ struct AppShell: View {
             pipeline.processAssistantText(text)
         }
 
+        process.onEmptyResponse = { [self] in
+            self.showEmptyResponseWarning = true
+        }
+
+        pipeline.onCompactionDetected = { [self] message in
+            self.compactionToastMessage = message
+            // Auto-dismiss after 4 seconds
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(4))
+                if self.compactionToastMessage == message {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        self.compactionToastMessage = nil
+                    }
+                }
+            }
+        }
+
         process.onTurnComplete = { metrics in
             cm.updateFromTurnMetrics(metrics)
             pipeline.processTurnMetrics(metrics)
+        }
+
+        // Wire multi-agent workflow completion — inject team report into main conversation
+        orchestrator.onWorkflowComplete = { [self] report in
+            // Add synthesized report as an assistant message in the main conversation
+            let reportMessage = ConversationMessage(
+                role: .assistant,
+                blocks: [TextBlock(text: report)]
+            )
+            self.process.messages.append(reportMessage)
         }
 
         process.onBeforeSend = { [self] text in
@@ -878,6 +969,12 @@ struct AppShell: View {
                 if let suggestion = router.analyze(message: text, context: routingContext) {
                     if router.autoApply {
                         proc.selectedModel = suggestion.model
+                        // Track model savings for the savings indicator
+                        switch suggestion.model {
+                        case .haiku: proc._pendingModelSavings = 0.95
+                        case .sonnet: proc._pendingModelSavings = 0.80
+                        case .opus: proc._pendingModelSavings = 0.0
+                        }
                     } else {
                         router.suggestion = suggestion
                     }
@@ -924,25 +1021,58 @@ struct AppShell: View {
 
     private func detectGitBranch(in directory: String) {
         Task.detached {
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            proc.arguments = ["rev-parse", "--abbrev-ref", "HEAD"]
-            proc.currentDirectoryURL = URL(fileURLWithPath: directory)
-            let pipe = Pipe()
-            proc.standardOutput = pipe
-            proc.standardError = Pipe()
-            try? proc.run()
-            proc.waitUntilExit()
-            if proc.terminationStatus == 0 {
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                if let branch = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !branch.isEmpty {
-                    await MainActor.run { [weak sessionManager] in
-                        if var session = sessionManager?.activeSession {
-                            session.gitBranch = branch
-                            sessionManager?.activeSession = session
+            let dirURL = URL(fileURLWithPath: directory)
+
+            // Get branch name
+            let branchProc = Process()
+            branchProc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            branchProc.arguments = ["rev-parse", "--abbrev-ref", "HEAD"]
+            branchProc.currentDirectoryURL = dirURL
+            let branchPipe = Pipe()
+            branchProc.standardOutput = branchPipe
+            branchProc.standardError = Pipe()
+            try? branchProc.run()
+            branchProc.waitUntilExit()
+
+            guard branchProc.terminationStatus == 0 else { return }
+            let branchData = branchPipe.fileHandleForReading.readDataToEndOfFile()
+            guard let branch = String(data: branchData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !branch.isEmpty else { return }
+
+            // Get ahead/behind counts
+            let statusProc = Process()
+            statusProc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            statusProc.arguments = ["rev-list", "--left-right", "--count", "\(branch)...@{upstream}"]
+            statusProc.currentDirectoryURL = dirURL
+            let statusPipe = Pipe()
+            statusProc.standardOutput = statusPipe
+            statusProc.standardError = Pipe()
+            try? statusProc.run()
+            statusProc.waitUntilExit()
+
+            var aheadBehind = ""
+            if statusProc.terminationStatus == 0 {
+                let statusData = statusPipe.fileHandleForReading.readDataToEndOfFile()
+                if let counts = String(data: statusData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
+                    let parts = counts.components(separatedBy: "\t")
+                    if parts.count == 2 {
+                        let ahead = Int(parts[0]) ?? 0
+                        let behind = Int(parts[1]) ?? 0
+                        var indicators: [String] = []
+                        if ahead > 0 { indicators.append("+\(ahead)") }
+                        if behind > 0 { indicators.append("-\(behind)") }
+                        if !indicators.isEmpty {
+                            aheadBehind = " " + indicators.joined(separator: "/")
                         }
                     }
+                }
+            }
+
+            let fullBranch = branch + aheadBehind
+            await MainActor.run { [weak sessionManager] in
+                if var session = sessionManager?.activeSession {
+                    session.gitBranch = fullBranch
+                    sessionManager?.activeSession = session
                 }
             }
         }
@@ -1328,11 +1458,11 @@ struct AppShell: View {
         commands.append(CommandItem(
             name: "Set Budget Cap",
             icon: "dollarsign.circle",
-            subtitle: process.maxBudgetUSD > 0 ? String(format: "Current: $%.2f", process.maxBudgetUSD) : "No limit set",
+            subtitle: String(format: "Current: $%.0f", process.maxBudgetUSD),
             category: .session
         ) {
-            // Toggle between common budget values
-            let budgets: [Double] = [0, 1.0, 5.0, 10.0, 25.0]
+            // Cycle between budget values (default $5)
+            let budgets: [Double] = [5.0, 10.0, 25.0, 50.0, 0]
             let currentIdx = budgets.firstIndex(of: process.maxBudgetUSD) ?? 0
             process.maxBudgetUSD = budgets[(currentIdx + 1) % budgets.count]
         })
@@ -1439,6 +1569,32 @@ struct AppShell: View {
                 SkillsManager.shared.invokeSkill(name: skill.name, process: process)
             })
         }
+
+        // One-click workflow presets
+        commands.append(CommandItem(
+            name: "Workflow: Audit Codebase",
+            icon: "shield.checkered",
+            subtitle: "Security + Quality + Performance scan (3 agents)",
+            category: .agent
+        ) { [weak orchestrator] in
+            if let orch = orchestrator, let dir = process.workingDirectory {
+                orch.runAuditWorkflow(projectDir: dir)
+                withAnimation { showAgentPanel = true }
+            }
+        })
+
+        commands.append(CommandItem(
+            name: "Workflow: Parallel Research",
+            icon: "magnifyingglass.circle.fill",
+            subtitle: "Codebase + Pattern analysis (2 agents)",
+            category: .agent
+        ) { [weak orchestrator] in
+            if let orch = orchestrator, let dir = process.workingDirectory {
+                let question = process.lastUserMessage ?? "Analyze the architecture and patterns in this codebase"
+                orch.runResearchWorkflow(projectDir: dir, question: question)
+                withAnimation { showAgentPanel = true }
+            }
+        })
 
         // Agent presets
         for preset in AgentPresets.shared.presets {
@@ -1840,8 +1996,8 @@ struct WindowCloseInterceptor: NSViewRepresentable {
                 return true
             }
 
-            // No session or no messages — close immediately
-            if !process.isRunning || process.messages.isEmpty {
+            // No session or no real work — close immediately
+            if !process.isRunning || !process.hasSubstantiveWork {
                 return true
             }
 

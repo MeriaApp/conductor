@@ -105,107 +105,82 @@ struct StatusBar: View {
                 .background(theme.lavender.opacity(0.15))
                 .clipShape(RoundedRectangle(cornerRadius: 4))
 
-                Divider()
-                    .frame(height: 12)
-                    .opacity(0.3)
+                statusDivider
             }
 
             // Window name (only show when set or editing)
             if !windowLabel.isEmpty || isEditingLabel {
                 windowNameIndicator
-
-                Divider()
-                    .frame(height: 12)
-                    .opacity(0.3)
+                statusDivider
             }
 
-            // Model indicator
+            // === LEFT ZONE: Metrics (checked every turn) ===
+
             modelIndicator
 
-            // Smart routing suggestion pill
             if let suggestion = modelRouter.suggestion {
                 modelSuggestionPill(suggestion)
             }
 
-            Divider()
-                .frame(height: 12)
-                .opacity(0.3)
+            statusDivider
 
-            // Context percentage
             contextIndicator
 
-            // Compaction indicator (shows when compaction detected or snapshot taken)
             if contextPipeline.compactionDetected || contextPipeline.snapshotTaken {
                 compactionIndicator
             }
 
-            Divider()
-                .frame(height: 12)
-                .opacity(0.3)
+            statusDivider
 
-            // Cost
             costIndicator
 
-            Divider()
-                .frame(height: 12)
-                .opacity(0.3)
+            statusDivider
 
-            // Working directory
+            // === CENTER ZONE: Project context ===
+
             if let dir = process.workingDirectory {
                 directoryIndicator(dir)
-
-                Divider()
-                    .frame(height: 12)
-                    .opacity(0.3)
+                statusDivider
             }
 
-            // Git branch (if detected)
             if let branch = sessionManager.activeSession?.gitBranch {
                 gitIndicator(branch: branch)
-
-                Divider()
-                    .frame(height: 12)
-                    .opacity(0.3)
+                statusDivider
             }
 
             Spacer()
 
-            // Agent Teams indicator (only show when enabled)
+            // === RIGHT ZONE: Settings (rarely changed) ===
+            // Only show non-default indicators to reduce clutter
+
             if process.agentTeamsEnabled {
                 agentTeamsIndicator
-
-                Divider()
-                    .frame(height: 12)
-                    .opacity(0.3)
+                statusDivider
             }
 
-            // Output mode indicator (only show when not standard)
             if process.outputMode != .standard {
                 outputModeIndicator
-
-                Divider()
-                    .frame(height: 12)
-                    .opacity(0.3)
+                statusDivider
             }
 
-            // Budget indicator (only show when set)
-            if process.maxBudgetUSD > 0 {
+            // Budget: only show when >80% used or non-default value
+            if process.maxBudgetUSD != 5.0 || process.totalCostUSD > process.maxBudgetUSD * 0.8 {
                 budgetIndicator
-
-                Divider()
-                    .frame(height: 12)
-                    .opacity(0.3)
+                statusDivider
             }
 
-            // Effort level picker
             effortPicker
 
-            // Permission mode indicator
             permissionIndicator
 
-            // Luminance control
             luminanceControl
         }
+    }
+
+    private var statusDivider: some View {
+        Divider()
+            .frame(height: 12)
+            .opacity(0.3)
     }
 
     // MARK: - Model
@@ -318,10 +293,28 @@ struct StatusBar: View {
 
     private var costIndicator: some View {
         let cost = process.totalCostUSD
+        let turnCost = process.lastTurnCostUSD
+        let savings = process.estimatedSavingsUSD
 
-        return Text(formatCost(cost))
-            .font(Typography.statusBar)
-            .foregroundColor(cost > 1.0 ? theme.amber : theme.muted)
+        return HStack(spacing: 4) {
+            Text(formatCost(cost))
+                .font(Typography.statusBar)
+                .foregroundColor(cost > 1.0 ? theme.amber : theme.muted)
+
+            // Per-turn cost (only show when > $0.01)
+            if turnCost >= 0.01 {
+                Text(String(format: "(+$%.2f)", turnCost))
+                    .font(Typography.statusBarSecondary)
+                    .foregroundColor(turnCost > 0.50 ? theme.rose : theme.muted)
+            }
+
+            // Savings indicator (only show when > $0.10)
+            if savings >= 0.10 {
+                Text(String(format: "saved ~$%.2f", savings))
+                    .font(Typography.statusBarSecondary)
+                    .foregroundColor(theme.sage)
+            }
+        }
     }
 
     // MARK: - Git
@@ -390,14 +383,30 @@ struct StatusBar: View {
 
     private var effortPicker: some View {
         Menu {
+            // Smart effort toggle
+            Button {
+                process.smartEffort.toggle()
+            } label: {
+                HStack {
+                    Image(systemName: "brain")
+                    Text("Smart (Auto)")
+                    if process.smartEffort {
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
+
+            Divider()
+
             ForEach(EffortLevel.allCases, id: \.rawValue) { level in
                 Button {
+                    process.smartEffort = false
                     process.effortLevel = level
                 } label: {
                     HStack {
                         Image(systemName: level.icon)
                         Text(level.displayName)
-                        if process.effortLevel == level {
+                        if !process.smartEffort && process.effortLevel == level {
                             Image(systemName: "checkmark")
                         }
                     }
@@ -405,12 +414,12 @@ struct StatusBar: View {
             }
         } label: {
             HStack(spacing: 3) {
-                Image(systemName: process.effortLevel.icon)
+                Image(systemName: process.smartEffort ? "brain" : process.effortLevel.icon)
                     .font(.system(size: 9))
-                Text(process.effortLevel.displayName)
+                Text(process.smartEffort ? "Auto" : process.effortLevel.displayName)
                     .font(Typography.statusBarSecondary)
             }
-            .foregroundColor(process.effortLevel == .high ? theme.sky : theme.muted)
+            .foregroundColor(process.smartEffort ? theme.sage : (process.effortLevel == .high ? theme.sky : theme.muted))
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
             .background(theme.elevated)

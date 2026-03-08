@@ -26,10 +26,28 @@ struct WelcomeView: View {
                         .font(.system(size: 22, weight: .semibold, design: .default))
                         .foregroundColor(theme.bright)
 
-                    Text("Claude Code, orchestrated.")
+                    Text(process.isVibeCoder ? "Just describe what you want to build." : "Claude Code, orchestrated.")
                         .font(Typography.body)
                         .foregroundColor(theme.muted)
                 }
+
+                if process.isVibeCoder {
+                    // Vibe mode: minimal welcome — just essentials
+                    HStack(spacing: 10) {
+                        quickAction("Exit Vibe", shortcut: "Ctrl+V", icon: "sparkles") {
+                            onToggleVibe?()
+                        }
+                        quickAction("Sessions", shortcut: "Cmd+S", icon: "clock.arrow.circlepath") {
+                            onSessionBrowser?()
+                        }
+                    }
+
+                    Text("Type what you want below — Conductor handles the rest")
+                        .font(Typography.caption)
+                        .foregroundColor(theme.muted)
+
+                    Spacer(minLength: 20)
+                } else {
 
                 // Quick-start action buttons
                 HStack(spacing: 10) {
@@ -91,6 +109,8 @@ struct WelcomeView: View {
                     .foregroundColor(theme.muted)
 
                 Spacer(minLength: 20)
+
+                } // end else (non-vibe mode)
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 20)
