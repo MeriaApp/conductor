@@ -263,10 +263,11 @@ final class AgentOrchestrator: ObservableObject {
         for id in agentIds {
             assignTask(agentId: id, task: task)
 
-            // Track each agent's result
+            // Track each agent's result — guard against double-reporting
             let subId = messageBus.subscribe(agentId: "\(id)_consensus") { [weak self] message in
                 guard message.from == id, message.type == .result else { return }
                 Task { @MainActor in
+                    guard completedResults[id] == nil else { return }
                     completedResults[id] = message.payload
                     // When all agents have reported, broadcast the consensus summary
                     if completedResults.count == agentIds.count {
@@ -494,10 +495,10 @@ final class AgentOrchestrator: ObservableObject {
 
         if fm.fileExists(atPath: "\(projectDir)/project.yml") ||
            fm.fileExists(atPath: "\(projectDir)/\(projectDir.components(separatedBy: "/").last ?? "").xcodeproj") {
-            // Xcode / xcodegen project
+            // Xcode / xcodegen project — quote schemeName to handle spaces/special chars
             let schemeName = URL(fileURLWithPath: projectDir).lastPathComponent
-            buildCommand = "cd \"\(projectDir)\" && xcodegen generate 2>/dev/null; xcodebuild -scheme \(schemeName) -destination 'platform=macOS' build 2>&1 | tail -20"
-            testCommand = "cd \"\(projectDir)\" && xcodebuild -scheme \(schemeName) -destination 'platform=macOS' test 2>&1 | tail -20"
+            buildCommand = "cd \"\(projectDir)\" && xcodegen generate 2>/dev/null; xcodebuild -scheme \"\(schemeName)\" -destination 'platform=macOS' build 2>&1 | tail -20"
+            testCommand = "cd \"\(projectDir)\" && xcodebuild -scheme \"\(schemeName)\" -destination 'platform=macOS' test 2>&1 | tail -20"
             launchCommand = nil
         } else if fm.fileExists(atPath: "\(projectDir)/package.json") {
             buildCommand = "cd \"\(projectDir)\" && npm run build 2>&1"
@@ -607,6 +608,7 @@ final class AgentOrchestrator: ObservableObject {
 
                 Task { @MainActor in
                     guard let self else { return }
+                    guard completedResults[agentId] == nil else { return }
                     let agentName = self.agents.first(where: { $0.id == agentId })?.name ?? "Agent"
                     completedResults[agentId] = "### \(agentName)\n\(message.payload)"
 

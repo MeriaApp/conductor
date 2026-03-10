@@ -255,7 +255,11 @@ final class PermissionManager: ObservableObject {
 
     private func saveRules() {
         guard let data = try? JSONEncoder().encode(rules) else { return }
-        try? data.write(to: rulesURL)
+        do {
+            try data.write(to: rulesURL)
+        } catch {
+            print("[PermissionManager] Failed to save rules: \(error)")
+        }
     }
 
     // MARK: - Helpers

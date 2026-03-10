@@ -7,6 +7,8 @@ struct ConductorApp: App {
     init() {
         // Allow window tabbing — each window gets independent state via SessionStateContainer
         NSWindow.allowsAutomaticWindowTabbing = true
+        // Request notification permission on launch so completion + permission notifications work
+        NotificationService.shared.requestPermission()
     }
 
     // Global services (shared across all windows)

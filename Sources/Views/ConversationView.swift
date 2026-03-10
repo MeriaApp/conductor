@@ -242,12 +242,15 @@ struct MessageView: View {
                 }
             }
 
-            // Content blocks
-            ForEach(Array(message.blocks.enumerated()), id: \.offset) { _, block in
-                // In vibe mode, hide tool use and thinking blocks
-                if process.isVibeCoder && (block is ToolUseBlock || block is ThinkingBlock) {
-                    EmptyView()
-                } else {
+            // Content blocks — group consecutive text-renderable blocks into single
+            // Text views so the user can click-drag to select across paragraphs,
+            // headings, lists, and blockquotes within a message.
+            let groups = Self.groupBlocks(message.blocks, hideToolsAndThinking: process.isVibeCoder)
+            ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+                switch group {
+                case .text(let textBlocks):
+                    MergedTextView(blocks: textBlocks)
+                case .nonText(let block):
                     ContentBlockRenderer(block: block, onFilePathTap: onFilePathTap, onDiffExpand: onDiffExpand)
                 }
             }
@@ -274,6 +277,41 @@ struct MessageView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
+    }
+
+    // MARK: - Block Grouping
+
+    enum BlockGroup {
+        case text([any ContentBlockProtocol])
+        case nonText(any ContentBlockProtocol)
+    }
+
+    /// Groups consecutive text-renderable blocks (TextBlock, ListBlock, BlockquoteBlock)
+    /// so they can be rendered as a single Text view for cross-block selection.
+    static func groupBlocks(_ blocks: [any ContentBlockProtocol], hideToolsAndThinking: Bool) -> [BlockGroup] {
+        var groups: [BlockGroup] = []
+        var currentTextGroup: [any ContentBlockProtocol] = []
+
+        for block in blocks {
+            // Skip hidden blocks in vibe mode
+            if hideToolsAndThinking && (block is ToolUseBlock || block is ThinkingBlock) {
+                continue
+            }
+
+            if block is TextBlock || block is ListBlock || block is BlockquoteBlock {
+                currentTextGroup.append(block)
+            } else {
+                if !currentTextGroup.isEmpty {
+                    groups.append(.text(currentTextGroup))
+                    currentTextGroup = []
+                }
+                groups.append(.nonText(block))
+            }
+        }
+        if !currentTextGroup.isEmpty {
+            groups.append(.text(currentTextGroup))
+        }
+        return groups
     }
 
     // MARK: - Vibe Action Buttons
@@ -367,6 +405,101 @@ struct MarkdownTextView: View {
             return attributed
         }
         return AttributedString(text)
+    }
+}
+
+// MARK: - Merged Text View (Cross-Block Selection)
+
+/// Renders consecutive text-renderable blocks as a single Text view,
+/// enabling click-drag selection across paragraphs, headings, lists, and blockquotes.
+struct MergedTextView: View {
+    let blocks: [any ContentBlockProtocol]
+    @EnvironmentObject private var theme: ThemeEngine
+
+    var body: some View {
+        Text(buildMergedAttributedString())
+            .font(Typography.body)
+            .foregroundColor(theme.primary)
+            .lineSpacing(4)
+            .tint(theme.sky)
+    }
+
+    private func buildMergedAttributedString() -> AttributedString {
+        var result = AttributedString()
+
+        for (idx, block) in blocks.enumerated() {
+            if idx > 0 {
+                result += AttributedString("\n\n")
+            }
+
+            if let textBlock = block as? TextBlock {
+                result += parseInlineMarkdown(textBlock.text)
+            } else if let listBlock = block as? ListBlock {
+                result += buildListString(listBlock)
+            } else if let quoteBlock = block as? BlockquoteBlock {
+                result += buildBlockquoteString(quoteBlock)
+            }
+        }
+
+        return result
+    }
+
+    private func parseInlineMarkdown(_ text: String) -> AttributedString {
+        if var attributed = try? AttributedString(markdown: text, options: .init(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace
+        )) {
+            for run in attributed.runs {
+                if run.link != nil {
+                    let range = run.range
+                    attributed[range].underlineStyle = .single
+                }
+            }
+            return attributed
+        }
+        return AttributedString(text)
+    }
+
+    private func buildListString(_ block: ListBlock) -> AttributedString {
+        var result = AttributedString()
+        for (idx, item) in block.items.enumerated() {
+            if idx > 0 {
+                result += AttributedString("\n")
+            }
+
+            let bulletText: String
+            switch block.style {
+            case .bullet: bulletText = "  \u{25B8}  "
+            case .numbered: bulletText = "  \(idx + 1).  "
+            case .checkbox: bulletText = "  [ ]  "
+            }
+
+            var bullet = AttributedString(bulletText)
+            bullet.foregroundColor = theme.sky
+            result += bullet
+
+            // Parse inline markdown within list items (bold, italic, code, links)
+            result += parseInlineMarkdown(item)
+        }
+        return result
+    }
+
+    private func buildBlockquoteString(_ block: BlockquoteBlock) -> AttributedString {
+        var result = AttributedString("\u{2502} ") // │ bar character
+        result.foregroundColor = theme.sand
+
+        if var text = try? AttributedString(markdown: block.text, options: .init(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace
+        )) {
+            text.foregroundColor = theme.secondary
+            text.inlinePresentationIntent = .emphasized
+            result += text
+        } else {
+            var text = AttributedString(block.text)
+            text.foregroundColor = theme.secondary
+            text.inlinePresentationIntent = .emphasized
+            result += text
+        }
+        return result
     }
 }
 
@@ -517,6 +650,13 @@ struct ScrollPositionMonitor: NSViewRepresentable {
     class Coordinator: NSObject {
         @Binding var isAtBottom: Bool
         private weak var scrollView: NSScrollView?
+        /// Tracks previous offset to detect scroll direction
+        private var lastScrollOffset: CGFloat = 0
+        /// Minimum upward scroll distance (px) before disengaging auto-scroll.
+        /// Prevents accidental disengage from rubber-band, trackpad noise, or animation overshoot.
+        private let disengageThreshold: CGFloat = 10
+        /// Distance from bottom (px) to re-engage auto-scroll
+        private let reengageThreshold: CGFloat = 80
 
         init(isAtBottom: Binding<Bool>) {
             _isAtBottom = isAtBottom
@@ -527,15 +667,16 @@ struct ScrollPositionMonitor: NSViewRepresentable {
             while let v = current {
                 if let sv = v as? NSScrollView {
                     self.scrollView = sv
+                    self.lastScrollOffset = sv.contentView.bounds.origin.y
                     NotificationCenter.default.addObserver(
                         self,
-                        selector: #selector(userDidScroll),
+                        selector: #selector(liveScrollDidChange),
                         name: NSScrollView.didLiveScrollNotification,
                         object: sv
                     )
                     NotificationCenter.default.addObserver(
                         self,
-                        selector: #selector(userDidScroll),
+                        selector: #selector(liveScrollDidEnd),
                         name: NSScrollView.didEndLiveScrollNotification,
                         object: sv
                     )
@@ -545,20 +686,53 @@ struct ScrollPositionMonitor: NSViewRepresentable {
             }
         }
 
-        @objc private func userDidScroll(_ notification: Notification) {
+        /// Fires continuously during user-initiated scroll (trackpad drag / mouse scroll).
+        /// Only DISENGAGE auto-scroll if the user scrolled UP by a meaningful amount.
+        /// Always allow RE-ENGAGE if user scrolls near bottom.
+        @objc private func liveScrollDidChange(_ notification: Notification) {
+            guard let scrollView = scrollView else { return }
+            let contentView = scrollView.contentView
+            let scrollOffset = contentView.bounds.origin.y
+
+            // User scrolled UP by more than threshold → disengage
+            if scrollOffset < lastScrollOffset - disengageThreshold {
+                if isAtBottom {
+                    DispatchQueue.main.async {
+                        self.isAtBottom = false
+                    }
+                }
+            }
+
+            // User scrolled near bottom → re-engage
+            let documentHeight = scrollView.documentView?.frame.height ?? 0
+            let visibleHeight = contentView.bounds.height
+            let distanceFromBottom = documentHeight - (scrollOffset + visibleHeight)
+            if distanceFromBottom < reengageThreshold && !isAtBottom {
+                DispatchQueue.main.async {
+                    self.isAtBottom = true
+                }
+            }
+
+            lastScrollOffset = scrollOffset
+        }
+
+        /// Fires once when user-initiated scroll ends (finger lifted / momentum stopped).
+        /// This is the settled position — do a full position check.
+        @objc private func liveScrollDidEnd(_ notification: Notification) {
             guard let scrollView = scrollView else { return }
             let contentView = scrollView.contentView
             let documentHeight = scrollView.documentView?.frame.height ?? 0
             let visibleHeight = contentView.bounds.height
             let scrollOffset = contentView.bounds.origin.y
             let distanceFromBottom = documentHeight - (scrollOffset + visibleHeight)
-            let atBottom = distanceFromBottom < 50
+            let atBottom = distanceFromBottom < reengageThreshold
 
             if atBottom != isAtBottom {
                 DispatchQueue.main.async {
                     self.isAtBottom = atBottom
                 }
             }
+            lastScrollOffset = scrollOffset
         }
 
         deinit {

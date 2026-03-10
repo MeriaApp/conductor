@@ -1,6 +1,6 @@
 # Context State — Conductor (Public Distribution Version)
 
-*Last updated: March 7, 2026*
+*Last updated: March 11, 2026*
 
 ## What This Is
 
@@ -11,7 +11,22 @@ This is the **distributable version** of Conductor, forked from the original at 
 
 ---
 
-## Current State: v3.0.0 — Invisible Intelligence Made Visible (Mar 8, 2026)
+## Current State: v3.0.0+ — UX Fixes (Mar 11, 2026)
+
+**Base:** v3.0.0 — Invisible Intelligence Made Visible
+
+### Mar 11 Session — Two UX Fixes (ConversationView.swift only)
+
+1. **Auto-scroll fix** — `ScrollPositionMonitor.Coordinator` split into two handlers (`liveScrollDidChange` / `liveScrollDidEnd`). Mid-animation scroll events no longer accidentally disengage auto-scroll. Only intentional upward scroll (>10px) disengages. Re-engage threshold bumped from 50px to 80px. Fixes "Jump to bottom" appearing unexpectedly in smaller windows.
+
+2. **Cross-block text selection** — New `MergedTextView` struct and `BlockGroup` enum. Consecutive text-renderable blocks (TextBlock, ListBlock, BlockquoteBlock) are merged into a single `AttributedString` and rendered as one `Text` view, enabling click-drag selection across paragraphs, headings, lists, and blockquotes. Non-text blocks (CodeBlock, DiffBlock, ToolUseBlock, ThinkingBlock) naturally break the chain. List bullets rendered inline (sky-colored triangle). Blockquotes use `│` character instead of drawn bar.
+
+**File changed:** `Sources/Views/ConversationView.swift`
+**Build:** SUCCEEDED (ad-hoc signed, debug build launched)
+**Not yet:** Committed, pushed, released, installed to /Applications. Jesse needs to test both fixes before committing.
+**Test:** Send a message that produces headings + paragraphs + bullet lists. Verify: (a) auto-scroll sticks during streaming in a small window, (b) can click-drag to select across headings/paragraphs/lists.
+
+---
 
 **Previous release:** v2.2.0 — smart cost controls
 

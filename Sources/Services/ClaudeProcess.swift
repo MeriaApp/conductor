@@ -55,6 +55,10 @@ final class ClaudeProcess: ObservableObject {
     private var watchdogTask: Task<Void, Never>?
     private static let processTimeoutSeconds: TimeInterval = 300 // 5 minutes
 
+    /// Event history cap — prevents unbounded memory growth on long sessions
+    private static let maxEventCount = 200
+    private static let eventTrimTarget = 150
+
     /// Stderr output (surfaced to UI instead of hidden)
     @Published var lastStderrMessage: String?
 
@@ -328,9 +332,10 @@ final class ClaudeProcess: ObservableObject {
             startReadingErrors(from: stderr)
             startWatchdog()
         } catch {
-            self.error = "Failed to launch Claude CLI: \(error.localizedDescription)"
+            let msg = "Failed to launch Claude CLI: \(error.localizedDescription)"
+            self.error = msg
             isStreaming = false
-            onError?(self.error!)
+            onError?(msg)
         }
     }
 
@@ -405,8 +410,8 @@ final class ClaudeProcess: ObservableObject {
         guard let event = StreamEventParser.parse(line: line) else { return }
 
         // Cap events array to prevent unbounded memory growth
-        if events.count >= 200 {
-            events.removeFirst(events.count - 150)
+        if events.count >= Self.maxEventCount {
+            events.removeFirst(events.count - Self.eventTrimTarget)
         }
         events.append(event)
 

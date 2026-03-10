@@ -128,11 +128,22 @@ final class CompactionEngine: ObservableObject {
     private func saveSnapshot(_ snapshot: ContextSnapshot) {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let snapshotsDir = appSupport.appendingPathComponent("Conductor/snapshots", isDirectory: true)
-        try? FileManager.default.createDirectory(at: snapshotsDir, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.createDirectory(at: snapshotsDir, withIntermediateDirectories: true)
+        } catch {
+            print("[CompactionEngine] Failed to create snapshots directory: \(error)")
+            return
+        }
 
         let file = snapshotsDir.appendingPathComponent("\(snapshot.id).json")
-        if let data = try? JSONEncoder().encode(snapshot) {
-            try? data.write(to: file)
+        guard let data = try? JSONEncoder().encode(snapshot) else {
+            print("[CompactionEngine] Failed to encode snapshot \(snapshot.id)")
+            return
+        }
+        do {
+            try data.write(to: file)
+        } catch {
+            print("[CompactionEngine] Failed to write snapshot \(snapshot.id): \(error)")
         }
     }
 }
