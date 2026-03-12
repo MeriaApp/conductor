@@ -9,6 +9,8 @@ struct ConductorApp: App {
         NSWindow.allowsAutomaticWindowTabbing = true
         // Request notification permission on launch so completion + permission notifications work
         NotificationService.shared.requestPermission()
+        // Local crash reporting — captures uncaught exceptions, writes to ~/Library/Application Support/Conductor/crash_logs/
+        CrashReporter.initialize()
     }
 
     // Global services (shared across all windows)

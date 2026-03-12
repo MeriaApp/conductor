@@ -16,9 +16,13 @@ SIGN_IDENTITY="Developer ID Application: JESSE ROBERT MERIA ($TEAM_ID)"
 echo "=== Conductor Release v$VERSION ==="
 echo ""
 
-# 1. Update version in project.yml
+# 1. Update version in project.yml + auto-increment build number
 echo "[1/6] Updating version to $VERSION..."
 sed -i '' "s/MARKETING_VERSION: \".*\"/MARKETING_VERSION: \"$VERSION\"/" "$PROJECT_DIR/project.yml"
+CURRENT_BUILD=$(grep 'CURRENT_PROJECT_VERSION:' "$PROJECT_DIR/project.yml" | sed 's/[^0-9]//g')
+NEXT_BUILD=$((CURRENT_BUILD + 1))
+sed -i '' "s/CURRENT_PROJECT_VERSION: $CURRENT_BUILD/CURRENT_PROJECT_VERSION: $NEXT_BUILD/" "$PROJECT_DIR/project.yml"
+echo "  Version: $VERSION ($NEXT_BUILD)"
 
 # 2. Regenerate Xcode project
 echo "[2/6] Generating Xcode project..."

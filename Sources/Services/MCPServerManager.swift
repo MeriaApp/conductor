@@ -14,6 +14,220 @@ enum MCPTransport: String {
     case http
 }
 
+// MARK: - Catalog Models
+
+struct MCPCatalogEntry: Identifiable {
+    struct Param: Identifiable {
+        let id = UUID().uuidString
+        let key: String
+        let displayName: String
+        let description: String
+        let placeholder: String
+        let isRequired: Bool
+        let isSecret: Bool
+        let target: ParamTarget
+
+        enum ParamTarget {
+            case inCommand  // substitute {KEY} in commandTemplate
+            case envVar     // pass as -e KEY=value
+        }
+    }
+
+    enum Category: String, CaseIterable {
+        case browser = "Browser"
+        case database = "Database"
+        case sourceControl = "Source Control"
+        case filesystem = "Filesystem"
+        case productivity = "Productivity"
+
+        var icon: String {
+            switch self {
+            case .browser: return "safari"
+            case .database: return "cylinder.split.1x2"
+            case .sourceControl: return "arrow.triangle.branch"
+            case .filesystem: return "folder"
+            case .productivity: return "checkmark.circle"
+            }
+        }
+    }
+
+    let id: String
+    let name: String
+    let description: String
+    let icon: String
+    let commandTemplate: String
+    let params: [Param]
+    let category: Category
+
+    func resolvedCommand(with values: [String: String]) -> String {
+        var cmd = commandTemplate
+        for param in params where param.target == .inCommand {
+            let value = values[param.key] ?? ""
+            cmd = cmd.replacingOccurrences(of: "{\(param.key)}", with: value)
+        }
+        return cmd
+    }
+
+    func resolvedEnvVars(with values: [String: String]) -> [(key: String, value: String)] {
+        params.compactMap { param in
+            guard param.target == .envVar,
+                  let value = values[param.key],
+                  !value.isEmpty else { return nil }
+            return (key: param.key, value: value)
+        }
+    }
+
+    var hasRequiredParams: Bool {
+        params.contains { $0.isRequired }
+    }
+}
+
+extension MCPServerManager {
+    static let catalog: [MCPCatalogEntry] = [
+        MCPCatalogEntry(
+            id: "playwright",
+            name: "Playwright",
+            description: "Browser automation — Claude can control real browsers, fill forms, take screenshots, and run end-to-end tests.",
+            icon: "safari",
+            commandTemplate: "npx @playwright/mcp@latest",
+            params: [],
+            category: .browser
+        ),
+        MCPCatalogEntry(
+            id: "supabase",
+            name: "Supabase",
+            description: "Direct database access — Claude can query your Supabase database, inspect schema, and run migrations.",
+            icon: "cylinder.split.1x2",
+            commandTemplate: "npx @supabase/mcp-server-supabase@latest --access-token {SUPABASE_ACCESS_TOKEN}",
+            params: [
+                MCPCatalogEntry.Param(
+                    key: "SUPABASE_ACCESS_TOKEN",
+                    displayName: "Access Token",
+                    description: "supabase.com > Account > Access Tokens",
+                    placeholder: "sbp_...",
+                    isRequired: true,
+                    isSecret: true,
+                    target: .inCommand
+                )
+            ],
+            category: .database
+        ),
+        MCPCatalogEntry(
+            id: "github",
+            name: "GitHub",
+            description: "Repository management — Claude can read code, create PRs, manage issues, and search across your repos.",
+            icon: "chevron.left.forwardslash.chevron.right",
+            commandTemplate: "npx @modelcontextprotocol/server-github",
+            params: [
+                MCPCatalogEntry.Param(
+                    key: "GITHUB_PERSONAL_ACCESS_TOKEN",
+                    displayName: "Personal Access Token",
+                    description: "github.com/settings/tokens — needs repo scope",
+                    placeholder: "ghp_...",
+                    isRequired: true,
+                    isSecret: true,
+                    target: .envVar
+                )
+            ],
+            category: .sourceControl
+        ),
+        MCPCatalogEntry(
+            id: "filesystem",
+            name: "Filesystem",
+            description: "Explicit file access — grant Claude read/write access to specific directories outside the current project.",
+            icon: "folder",
+            commandTemplate: "npx @modelcontextprotocol/server-filesystem {ALLOWED_PATH}",
+            params: [
+                MCPCatalogEntry.Param(
+                    key: "ALLOWED_PATH",
+                    displayName: "Allowed Path",
+                    description: "Absolute path Claude can read and write",
+                    placeholder: "/Users/you/Documents",
+                    isRequired: true,
+                    isSecret: false,
+                    target: .inCommand
+                )
+            ],
+            category: .filesystem
+        ),
+        MCPCatalogEntry(
+            id: "postgres",
+            name: "PostgreSQL",
+            description: "Direct Postgres connection — Claude can query any Postgres database using a connection string.",
+            icon: "cylinder.split.1x2.fill",
+            commandTemplate: "npx @modelcontextprotocol/server-postgres {DATABASE_URL}",
+            params: [
+                MCPCatalogEntry.Param(
+                    key: "DATABASE_URL",
+                    displayName: "Connection String",
+                    description: "Full PostgreSQL connection URL",
+                    placeholder: "postgresql://user:pass@host/db",
+                    isRequired: true,
+                    isSecret: true,
+                    target: .inCommand
+                )
+            ],
+            category: .database
+        ),
+        MCPCatalogEntry(
+            id: "memory",
+            name: "Memory",
+            description: "Persistent memory — Claude remembers facts and context across conversations using a local knowledge graph.",
+            icon: "brain",
+            commandTemplate: "npx @modelcontextprotocol/server-memory",
+            params: [],
+            category: .productivity
+        ),
+        MCPCatalogEntry(
+            id: "linear",
+            name: "Linear",
+            description: "Issue tracking — Claude can read and create Linear issues, update project status, and manage workflows.",
+            icon: "checkmark.circle.fill",
+            commandTemplate: "npx @linear/mcp-server",
+            params: [
+                MCPCatalogEntry.Param(
+                    key: "LINEAR_API_KEY",
+                    displayName: "API Key",
+                    description: "linear.app/settings/api",
+                    placeholder: "lin_api_...",
+                    isRequired: true,
+                    isSecret: true,
+                    target: .envVar
+                )
+            ],
+            category: .productivity
+        ),
+        MCPCatalogEntry(
+            id: "slack",
+            name: "Slack",
+            description: "Messaging — Claude can read channels, search messages, and post updates to your Slack workspace.",
+            icon: "message.fill",
+            commandTemplate: "npx @modelcontextprotocol/server-slack",
+            params: [
+                MCPCatalogEntry.Param(
+                    key: "SLACK_BOT_TOKEN",
+                    displayName: "Bot Token",
+                    description: "api.slack.com/apps > Bot User OAuth Token",
+                    placeholder: "xoxb-...",
+                    isRequired: true,
+                    isSecret: true,
+                    target: .envVar
+                ),
+                MCPCatalogEntry.Param(
+                    key: "SLACK_TEAM_ID",
+                    displayName: "Team ID",
+                    description: "Your Slack workspace ID (starts with T)",
+                    placeholder: "T01234567",
+                    isRequired: true,
+                    isSecret: false,
+                    target: .envVar
+                )
+            ],
+            category: .productivity
+        ),
+    ]
+}
+
 enum MCPServerStatus {
     case healthy
     case needsAuth
@@ -161,6 +375,13 @@ final class MCPServerManager: ObservableObject {
                 status: status
             ))
         }
+    }
+
+    // MARK: - Catalog
+
+    /// Whether a catalog entry is already installed (name matches an existing server)
+    func isCatalogEntryInstalled(_ entry: MCPCatalogEntry) -> Bool {
+        servers.contains { $0.name.lowercased() == entry.id.lowercased() }
     }
 
     // MARK: - Subprocess

@@ -239,26 +239,49 @@ private enum Templates {
 
     static let auditSkill = """
     ---
-    description: Use when auditing code quality, reviewing architecture, or checking for issues. Systematic review without making changes unless asked.
+    description: Use when auditing code quality, reviewing architecture, or checking for issues. Evidence-based — every finding must be verified with a command before reporting.
     ---
 
     # Code Audit
 
+    ## HARD RULE: Verify Before Reporting
+    Every finding MUST include the command output that proves it.
+    - Secrets in git? Run `git ls-files` to confirm the file is tracked, not just present locally.
+    - Hardcoded credential? Show the exact line AND confirm it's reachable in production.
+    - Security vulnerability? Demonstrate the attack path, don't just flag a pattern.
+    - Dead code? Grep for all references before claiming it's unused.
+    If you cannot verify a finding with a command, mark it as UNVERIFIED and explain what you couldn't check.
+
+    ## Severity Definitions
+    - CRITICAL: Exploitable now, causes data loss or security breach. Verified with evidence.
+    - HIGH: Real bug or risk, but requires specific conditions. Verified.
+    - MEDIUM: Code quality issue with concrete downside. Verified or clearly observable.
+    - LOW: Tech debt, style, theoretical concern.
+
     ## Check For
-    - Dead code: unused imports, unreachable branches
-    - Error handling: swallowed errors, silent failures
-    - Security: injection risks, hardcoded secrets
-    - Performance: unnecessary work, missing caching
-    - Architecture: circular deps, god objects
+    - Security: secrets in git (`git ls-files`), injection, hardcoded credentials, missing auth
+    - Error handling: swallowed errors (.catch(() => {})), silent failures, missing error states
+    - Data integrity: race conditions, missing validation at system boundaries
+    - Dead code: unused imports, unreachable branches (verify with grep)
+    - Performance: unnecessary work, N+1 queries, missing caching
 
     ## Report Format
-    For each finding: File:line | Issue | Severity | Fix
-    Severity: Critical / Important / Low
+    For each finding:
+    1. File:line — exact location
+    2. What's wrong — one sentence
+    3. Evidence — command output or code snippet proving it
+    4. Severity — using definitions above
+    5. Fix — specific action to take
 
     ## Skip
     - Style preferences that don't affect behavior
     - Missing docs on self-documenting code
-    - Theoretical concerns without real impact
+    - Theoretical concerns you cannot demonstrate
+    - Patterns that look risky but are actually safe (verify first)
+
+    ## What's Healthy
+    End the audit with a section listing what IS working well.
+    Audits that only list problems give a distorted picture.
     """
 
     static let releaseSkill = """

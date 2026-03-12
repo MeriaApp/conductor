@@ -40,6 +40,8 @@ struct AppShell: View {
     @State private var showSkillsBrowser = false
     @State private var showCommandsBrowser = false
     @State private var showMCPManager = false
+    @State private var showGeminiPanel = false
+    @State private var showDevToolPanel = false
     @State private var showCompactBar = false
     @State private var compactInstructions = ""
     @State private var showSessionDiff = false
@@ -175,11 +177,28 @@ struct AppShell: View {
                         Divider().opacity(0.3)
 
                         if showDashboard {
-                            DashboardPanel(onShowSessionDiff: {
-                                withAnimation(.easeOut(duration: 0.15)) {
-                                    showSessionDiff = true
+                            DashboardPanel(
+                                onShowSessionDiff: {
+                                    withAnimation(.easeOut(duration: 0.15)) {
+                                        showSessionDiff = true
+                                    }
+                                },
+                                onOpenGemini: {
+                                    withAnimation(.easeOut(duration: 0.15)) {
+                                        showGeminiPanel = true
+                                    }
+                                },
+                                onOpenDevTools: {
+                                    withAnimation(.easeOut(duration: 0.15)) {
+                                        showDevToolPanel = true
+                                    }
+                                },
+                                onOpenMCPCatalog: {
+                                    withAnimation(.easeOut(duration: 0.15)) {
+                                        showMCPManager = true
+                                    }
                                 }
-                            })
+                            )
                         } else if showAgentPanel {
                             AgentPanel()
                         }
@@ -419,6 +438,34 @@ struct AppShell: View {
                 .transition(.opacity)
             }
 
+            // Gemini Panel (Cmd+Shift+G)
+            if showGeminiPanel {
+                Color.black.opacity(0.3)
+                    .ignoresSafeArea()
+                    .onTapGesture { showGeminiPanel = false }
+
+                VStack {
+                    GeminiPanel(isPresented: $showGeminiPanel)
+                        .padding(.top, 60)
+                    Spacer()
+                }
+                .transition(.opacity)
+            }
+
+            // Dev Tools Panel (Cmd+Shift+L)
+            if showDevToolPanel {
+                Color.black.opacity(0.3)
+                    .ignoresSafeArea()
+                    .onTapGesture { showDevToolPanel = false }
+
+                VStack {
+                    DevToolPanel(isPresented: $showDevToolPanel, projectDir: process.workingDirectory)
+                        .padding(.top, 60)
+                    Spacer()
+                }
+                .transition(.opacity)
+            }
+
             // Compact Instructions bar
             if showCompactBar {
                 VStack {
@@ -519,6 +566,18 @@ struct AppShell: View {
             }
             if showPerformance {
                 withAnimation(.easeOut(duration: 0.15)) { showPerformance = false }
+                return .handled
+            }
+            if showMCPManager {
+                withAnimation(.easeOut(duration: 0.15)) { showMCPManager = false }
+                return .handled
+            }
+            if showGeminiPanel {
+                withAnimation(.easeOut(duration: 0.15)) { showGeminiPanel = false }
+                return .handled
+            }
+            if showDevToolPanel {
+                withAnimation(.easeOut(duration: 0.15)) { showDevToolPanel = false }
                 return .handled
             }
             return .ignored
@@ -636,6 +695,26 @@ struct AppShell: View {
             }
             return .ignored
         }
+        // Gemini Panel (Cmd+Shift+G)
+        .onKeyPress(characters: CharacterSet(charactersIn: "g"), phases: .down) { press in
+            if press.modifiers.contains([.command, .shift]) {
+                withAnimation(.easeOut(duration: 0.15)) {
+                    showGeminiPanel.toggle()
+                }
+                return .handled
+            }
+            return .ignored
+        }
+        // Dev Tools Panel (Cmd+Shift+L)
+        .onKeyPress(characters: CharacterSet(charactersIn: "l"), phases: .down) { press in
+            if press.modifiers.contains([.command, .shift]) {
+                withAnimation(.easeOut(duration: 0.15)) {
+                    showDevToolPanel.toggle()
+                }
+                return .handled
+            }
+            return .ignored
+        }
         // Session Diff Review (Cmd+Shift+D)
         .onKeyPress(characters: CharacterSet(charactersIn: "d"), phases: .down) { press in
             if press.modifiers.contains([.command, .shift]) {
@@ -730,9 +809,9 @@ struct AppShell: View {
             openWindow(id: "conductor", value: UUID())
             return .handled
         }
-        // Clear conversation (Cmd+L) — like terminal clear
+        // Clear conversation (Cmd+L) — like terminal clear. Guard against Cmd+Shift+L (Dev Tools).
         .onKeyPress(characters: CharacterSet(charactersIn: "l"), phases: .down) { press in
-            guard press.modifiers.contains(.command) else { return .ignored }
+            guard press.modifiers.contains(.command), !press.modifiers.contains(.shift) else { return .ignored }
             process.messages.removeAll()
             return .handled
         }
@@ -1555,6 +1634,68 @@ struct AppShell: View {
         ) {
             withAnimation(.easeOut(duration: 0.15)) {
                 showMCPManager = true
+            }
+        })
+
+        // Gemini
+        commands.append(CommandItem(
+            name: "Ask Gemini...",
+            icon: "sparkles",
+            shortcut: "Cmd+Shift+G",
+            subtitle: "Second opinion, long-context tasks, free Gemini Flash",
+            category: .agent
+        ) {
+            withAnimation(.easeOut(duration: 0.15)) {
+                showGeminiPanel = true
+            }
+        })
+
+        // Dev Tools
+        commands.append(CommandItem(
+            name: "Dev Tools",
+            icon: "hammer.fill",
+            shortcut: "Cmd+Shift+L",
+            subtitle: "CodeRabbit · SwiftLint · Periphery · Fastlane",
+            category: .session
+        ) {
+            withAnimation(.easeOut(duration: 0.15)) {
+                showDevToolPanel = true
+            }
+        })
+
+        commands.append(CommandItem(
+            name: "Review with CodeRabbit",
+            icon: "doc.text.magnifyingglass",
+            subtitle: "AI code review on the current git diff",
+            category: .session
+        ) {
+            if let dir = process.workingDirectory {
+                DevToolService.shared.run(.codeRabbit, projectDir: dir)
+                withAnimation(.easeOut(duration: 0.15)) { showDevToolPanel = true }
+            }
+        })
+
+        commands.append(CommandItem(
+            name: "Lint Project (SwiftLint)",
+            icon: "checkmark.seal",
+            subtitle: "Run SwiftLint on the current project",
+            category: .session
+        ) {
+            if let dir = process.workingDirectory {
+                DevToolService.shared.run(.swiftLint, projectDir: dir)
+                withAnimation(.easeOut(duration: 0.15)) { showDevToolPanel = true }
+            }
+        })
+
+        commands.append(CommandItem(
+            name: "Dead Code Scan (Periphery)",
+            icon: "eye.slash",
+            subtitle: "Find unused declarations in the project",
+            category: .session
+        ) {
+            if let dir = process.workingDirectory {
+                DevToolService.shared.run(.periphery, projectDir: dir)
+                withAnimation(.easeOut(duration: 0.15)) { showDevToolPanel = true }
             }
         })
 

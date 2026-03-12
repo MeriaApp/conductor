@@ -11,24 +11,50 @@ This is the **distributable version** of Conductor, forked from the original at 
 
 ---
 
-## Current State: v3.0.0+ — UX Fixes (Mar 11, 2026)
+## Current State: v3.2.0 — IN PROGRESS (Mar 12, 2026)
 
-**Base:** v3.0.0 — Invisible Intelligence Made Visible
+### v3.2.0 Changes — Toolkit Integrations (5 items)
 
-### Mar 11 Session — Two UX Fixes (ConversationView.swift only)
+1. **MCP Catalog** (`MCPServerManager.swift`, `MCPServerOverlay.swift`) — 8-entry curated catalog with one-click install. Playwright, Supabase, GitHub, Filesystem, PostgreSQL, Memory, Linear, Slack. Category filter, credential forms, installed badges. Two-tab overlay: Installed | Catalog.
 
-1. **Auto-scroll fix** — `ScrollPositionMonitor.Coordinator` split into two handlers (`liveScrollDidChange` / `liveScrollDidEnd`). Mid-animation scroll events no longer accidentally disengage auto-scroll. Only intentional upward scroll (>10px) disengages. Re-engage threshold bumped from 50px to 80px. Fixes "Jump to bottom" appearing unexpectedly in smaller windows.
+2. **Gemini CLI Backend** (`GeminiProcess.swift`, `GeminiPanel.swift`) — Ask Gemini from within Conductor. Cmd+Shift+G. Runs via login shell (sources ~/.keys). Flash (free) and Pro models. Multi-turn history, cancel support.
 
-2. **Cross-block text selection** — New `MergedTextView` struct and `BlockGroup` enum. Consecutive text-renderable blocks (TextBlock, ListBlock, BlockquoteBlock) are merged into a single `AttributedString` and rendered as one `Text` view, enabling click-drag selection across paragraphs, headings, lists, and blockquotes. Non-text blocks (CodeBlock, DiffBlock, ToolUseBlock, ThinkingBlock) naturally break the chain. List bullets rendered inline (sky-colored triangle). Blockquotes use `│` character instead of drawn bar.
+3. **Dev Tools Panel** (`DevToolService.swift`, `DevToolPanel.swift`) — Run CodeRabbit, SwiftLint, Periphery, Fastlane from Cmd+Shift+L or command palette. Streams output live, exit code indicator, cancel support.
 
-**File changed:** `Sources/Views/ConversationView.swift`
-**Build:** SUCCEEDED (ad-hoc signed, debug build launched)
-**Not yet:** Committed, pushed, released, installed to /Applications. Jesse needs to test both fixes before committing.
-**Test:** Send a message that produces headings + paragraphs + bullet lists. Verify: (a) auto-scroll sticks during streaming in a small window, (b) can click-drag to select across headings/paragraphs/lists.
+4. **Crash Reporter** (`CrashReporter.swift`) — Local uncaught exception logging to ~/Library/Application Support/Conductor/crash_logs/. Sentry integration documented and ready to activate (needs DSN).
+
+5. **Command Palette entries** — "Ask Gemini...", "Dev Tools", "Review with CodeRabbit", "Lint Project (SwiftLint)", "Dead Code Scan (Periphery)". All wired with shortcuts.
+
+**Build:** SUCCEEDED (Mar 12, 2026)
+**Not yet:** committed, pushed, released, notarized
 
 ---
 
-**Previous release:** v2.2.0 — smart cost controls
+## Previous Release: v3.1.0 — RELEASED (Mar 11, 2026)
+
+**Release:** https://github.com/MeriaApp/conductor/releases/tag/v3.1.0
+**Build:** Developer ID signed, 6.1MB zip, pushed + released on GitHub
+
+### v3.1.0 Changes — UX Fixes + Defensive Audit
+
+**UX Fixes (ConversationView.swift):**
+1. **Auto-scroll fix** — `ScrollPositionMonitor.Coordinator` split into two handlers (`liveScrollDidChange` / `liveScrollDidEnd`). Mid-animation scroll events no longer accidentally disengage auto-scroll. Only intentional upward scroll (>10px) disengages. Re-engage threshold bumped from 50px to 80px. Fixes "Jump to bottom" appearing unexpectedly in smaller windows.
+2. **Cross-block text selection** — New `MergedTextView` struct and `BlockGroup` enum. Consecutive text-renderable blocks (TextBlock, ListBlock, BlockquoteBlock) merged into single `AttributedString` rendered as one `Text` view. Click-drag selection flows across paragraphs, headings, lists, blockquotes. List bullets inline (sky-colored triangle). Blockquotes use `│` character.
+
+**Defensive Audit (7 fixes):**
+1. Force unwrap removed — `ClaudeProcess.swift` (crash risk on `self.error!`)
+2. Notifications wired — `ConductorApp.swift` (`requestPermission()` was never called, all notifications silently dropped)
+3. Shell injection patched — `AgentOrchestrator.swift` (quoted scheme name in autoBuildVerify)
+4. Double-counting fixed — `AgentOrchestrator.swift` (guard against duplicate agent results)
+5. Silent save failure logged — `PermissionManager.swift` (try? → do/catch)
+6. Silent snapshot save logged — `CompactionEngine.swift` (try? → do/catch)
+7. Magic numbers named — `ClaudeProcess.swift` (maxEventCount/eventTrimTarget constants)
+
+**Files changed:** `ConversationView.swift`, `ConductorApp.swift`, `ClaudeProcess.swift`, `AgentOrchestrator.swift`, `PermissionManager.swift`, `CompactionEngine.swift`, `project.yml`
+
+---
+
+**Previous release:** v3.1.0 — UX Fixes + Defensive Audit
 
 ### v3.0.0 Changes (4 Items from CONDUCTOR_V3_PLAN.md)
 
@@ -111,7 +137,7 @@ G. **Terminal passthrough bar** — Already existed (`AppShell.swift:1831`). Ctr
 
 **Still on roadmap:**
 - App icon (still default Xcode globe)
-- Notarization (needs Apple ID app-specific password)
+- v3.1.0 notarization (v3.0.0 was notarized, v3.1.0 needs it)
 - API key support (monetization path — users bring their own key)
 - Landing page
 - Sparkle auto-updates
@@ -232,10 +258,9 @@ Apple Distribution: JESSE ROBERT MERIA (36D97ZTP6J)
 ## Build Status
 - **Compiles:** YES (BUILD SUCCEEDED)
 - **Signed:** YES (Developer ID Application)
-- **Version:** 3.0.0
-- **Released on GitHub:** v1.0.0 only — v2.1.0/v2.2.0/v3.0.0 committed but not pushed/released
-- **Installed:** /Applications/Conductor.app (v3.0.0)
-- **Desktop zip:** ~/Desktop/Conductor.zip (v3.0.0, Developer ID signed, 2.5MB)
-- **Notarized:** YES (Mar 8, 2026). Keychain profile: `"Conductor"`. Gatekeeper: accepted, source=Notarized Developer ID.
+- **Version:** 3.1.0
+- **Released on GitHub:** v3.1.0 (Mar 11, 2026) — includes all changes from v2.1.0 through v3.1.0
+- **Installed:** /Applications/Conductor.app (v3.1.0, signature valid)
+- **Notarized:** v3.0.0 was notarized (Mar 8). v3.1.0 may need re-notarization.
 - **Notarize command:** `xcrun notarytool submit app.zip --keychain-profile "Conductor" --wait && xcrun stapler staple Conductor.app`
 - **Build flags for notarization:** `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO OTHER_CODE_SIGN_FLAGS="--options=runtime --timestamp"`

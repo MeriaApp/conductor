@@ -18,6 +18,11 @@ struct DashboardPanel: View {
     /// Callback to open session diff review
     var onShowSessionDiff: (() -> Void)?
 
+    /// Toolkit panel callbacks
+    var onOpenGemini: (() -> Void)?
+    var onOpenDevTools: (() -> Void)?
+    var onOpenMCPCatalog: (() -> Void)?
+
     var body: some View {
         VStack(spacing: 0) {
             // PINNED section (only if there are pinned messages)
@@ -64,6 +69,15 @@ struct DashboardPanel: View {
                 collapsedSections.formSymmetricDifference(["optimizations"])
             } content: {
                 optimizationsPanel
+            }
+
+            Divider().opacity(0.2)
+
+            // TOOLKIT section
+            dashboardSection("TOOLKIT", icon: "puzzlepiece.extension.fill", isCollapsed: collapsedSections.contains("toolkit")) {
+                collapsedSections.formSymmetricDifference(["toolkit"])
+            } content: {
+                toolkitPanel
             }
 
             Divider().opacity(0.2)
@@ -397,6 +411,89 @@ struct DashboardPanel: View {
                 .font(.system(size: 9, design: .monospaced))
                 .foregroundColor(theme.muted)
         }
+    }
+
+    // MARK: - TOOLKIT Panel
+
+    private var toolkitPanel: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            toolkitButton(
+                icon: "sparkles",
+                label: "Ask Gemini",
+                detail: "Long context · second opinion",
+                shortcut: "⌘⇧G",
+                color: theme.lavender,
+                runningIndicator: GeminiProcess.shared.isRunning,
+                action: onOpenGemini
+            )
+            toolkitButton(
+                icon: "hammer.fill",
+                label: "Dev Tools",
+                detail: "Lint · review · dead code · deploy",
+                shortcut: "⌘⇧L",
+                color: theme.sand,
+                runningIndicator: DevToolService.shared.isRunning,
+                action: onOpenDevTools
+            )
+            toolkitButton(
+                icon: "puzzlepiece.extension.fill",
+                label: "MCP Catalog",
+                detail: "Install integrations one-click",
+                shortcut: "⌘⇧I",
+                color: theme.sky,
+                runningIndicator: false,
+                action: onOpenMCPCatalog
+            )
+        }
+    }
+
+    private func toolkitButton(
+        icon: String,
+        label: String,
+        detail: String,
+        shortcut: String,
+        color: Color,
+        runningIndicator: Bool,
+        action: (() -> Void)?
+    ) -> some View {
+        Button {
+            action?()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 11))
+                    .foregroundColor(color)
+                    .frame(width: 16)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(label)
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundColor(theme.primary)
+                    Text(detail)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(theme.muted)
+                }
+
+                Spacer()
+
+                if runningIndicator {
+                    ProgressView().controlSize(.mini).padding(.trailing, 2)
+                } else {
+                    Text(shortcut)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(theme.muted.opacity(0.6))
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(theme.elevated.opacity(0.5))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(color.opacity(0.15), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - CONTEXT Panel
