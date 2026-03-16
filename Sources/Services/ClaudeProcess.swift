@@ -42,6 +42,10 @@ final class ClaudeProcess: ObservableObject {
     private var stdinHandle: FileHandle?
     private var readTask: Task<Void, Never>?
     private var stderrReadTask: Task<Void, Never>?
+    private var pendingSendTask: Task<Void, Never>?
+
+    /// Generation counter — detects stale writes after stop()+start() cycles
+    private var sessionGeneration: Int = 0
 
     /// Current message being streamed
     private var streamingMessage: ConversationMessage?
@@ -144,6 +148,7 @@ final class ClaudeProcess: ObservableObject {
     /// The process stays alive for the entire session — messages are written to stdin.
     func start(directory: String? = nil, resumeSession: String? = nil) {
         stop()
+        sessionGeneration += 1
         workingDirectory = directory ?? workingDirectory
         if let session = resumeSession {
             sessionId = session
@@ -162,10 +167,12 @@ final class ClaudeProcess: ObservableObject {
             currentProcess?.interrupt()
             isStreaming = false
             finalizeStreamingMessage()
-            // Brief delay for Claude CLI to process the interrupt
-            Task {
+            // Cancel any previous pending send, then wait for CLI to process interrupt
+            pendingSendTask?.cancel()
+            pendingSendTask = Task {
                 try? await Task.sleep(for: .milliseconds(200))
-                await writeTurn(text)
+                guard !Task.isCancelled else { return }
+                writeTurn(text)
             }
             return
         }
@@ -216,25 +223,29 @@ final class ClaudeProcess: ObservableObject {
 
         guard let writeData = jsonString.data(using: .utf8) else { return }
 
-        isStreaming = true
         streamStartTime = Date()
 
         // Write to stdin on a background thread to avoid blocking MainActor
         let handle = stdinHandle
+        let generation = sessionGeneration
         Task.detached {
             do {
                 try handle?.write(contentsOf: writeData)
+                await MainActor.run { [weak self] in
+                    guard let self, self.sessionGeneration == generation else { return }
+                    self.isStreaming = true
+                    self.startResponseWatchdog()
+                }
             } catch {
                 await MainActor.run { [weak self] in
+                    guard let self, self.sessionGeneration == generation else { return }
                     let msg = "Failed to write to Claude CLI: \(error.localizedDescription)"
-                    self?.error = msg
-                    self?.isStreaming = false
-                    self?.onError?(msg)
+                    self.error = msg
+                    self.isStreaming = false
+                    self.onError?(msg)
                 }
             }
         }
-
-        startResponseWatchdog()
     }
 
     /// Interrupt current operation (SIGINT) — process stays alive
@@ -249,6 +260,8 @@ final class ClaudeProcess: ObservableObject {
     /// Stop the session — terminate the persistent process
     func stop() {
         processTerminatedDeliberately = true
+        pendingSendTask?.cancel()
+        pendingSendTask = nil
         watchdogTask?.cancel()
         watchdogTask = nil
         readTask?.cancel()
@@ -379,14 +392,14 @@ final class ClaudeProcess: ObservableObject {
                 guard !self.processTerminatedDeliberately else { return }
 
                 let status = process.terminationStatus
-                // SIGINT (2) is normal from interrupt(), not an error
                 if status != 0 && status != 2 {
+                    // Unexpected exit — surface error
                     let msg = "Claude CLI process exited unexpectedly (code \(status))"
                     self.error = msg
                     self.isRunning = false
                     self.onError?(msg)
-                } else if status == 0 {
-                    // Clean exit (e.g., budget exhausted) — allow restart
+                } else {
+                    // Clean exit (0) or SIGINT (2) — process is dead either way
                     self.isRunning = false
                 }
             }
@@ -455,22 +468,19 @@ final class ClaudeProcess: ObservableObject {
         }
     }
 
-    /// Per-response watchdog — kills response if no result event within timeout
+    /// Per-response watchdog — interrupts response if no result event within timeout
     private func startResponseWatchdog() {
         watchdogTask?.cancel()
         watchdogTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(Self.responseTimeoutSeconds))
             guard !Task.isCancelled else { return }
-            await MainActor.run {
-                guard let self, self.isStreaming else { return }
-                let msg = "Response timed out after \(Int(Self.responseTimeoutSeconds))s"
-                self.error = msg
-                self.onError?(msg)
-                // Interrupt the response, but keep the process alive
-                self.currentProcess?.interrupt()
-                self.isStreaming = false
-                self.finalizeStreamingMessage()
-            }
+            guard let self, self.isStreaming else { return }
+            let msg = "Response timed out after \(Int(Self.responseTimeoutSeconds))s"
+            self.error = msg
+            self.onError?(msg)
+            self.currentProcess?.interrupt()
+            self.isStreaming = false
+            self.finalizeStreamingMessage()
         }
     }
 
@@ -523,7 +533,8 @@ final class ClaudeProcess: ObservableObject {
 
         if hadStreaming,
            let lastIdx = messages.indices.last,
-           messages[lastIdx].role == .assistant {
+           messages[lastIdx].role == .assistant,
+           messages[lastIdx].isStreaming {
             messages.removeLast()
         }
 
