@@ -1,14 +1,15 @@
 import Foundation
 
-/// Manages Claude CLI communication via per-message subprocess calls
-/// Each user message launches: claude -p "message" --output-format stream-json --include-partial-messages --verbose --resume <sessionId>
-/// Session continuity maintained via --resume with the CLI-generated session ID
+/// Manages Claude CLI as a persistent interactive process.
+/// Launches once on start(), keeps stdin open, writes JSON messages per turn.
+/// Uses: claude -p --input-format stream-json --output-format stream-json --include-partial-messages --verbose
+/// Session is a single live process — same as running Claude CLI in terminal.
 @MainActor
 final class ClaudeProcess: ObservableObject {
 
     // MARK: - Published State
 
-    @Published var isRunning = false       // Session is active (ready to accept messages)
+    @Published var isRunning = false       // Session is active (process alive, ready for messages)
     @Published var isStreaming = false      // Currently receiving a response
     @Published var events: [StreamEvent] = []
     @Published var messages: [ConversationMessage] = []
@@ -38,7 +39,9 @@ final class ClaudeProcess: ObservableObject {
     // MARK: - Private
 
     private var currentProcess: Process?
+    private var stdinHandle: FileHandle?
     private var readTask: Task<Void, Never>?
+    private var stderrReadTask: Task<Void, Never>?
 
     /// Current message being streamed
     private var streamingMessage: ConversationMessage?
@@ -46,14 +49,15 @@ final class ClaudeProcess: ObservableObject {
     private var streamingThinkingBlock: ThinkingBlock?
     private var streamStartTime: Date?
 
-    /// Error recovery: auto-retry on transient failures
-    private var retryCount = 0
-    private let maxRetries = 2
+    /// Error recovery
     private var lastPrompt: String?
 
-    /// Watchdog: kills hung processes after timeout
+    /// Per-response watchdog (not per-process — process is long-lived)
     private var watchdogTask: Task<Void, Never>?
-    private static let processTimeoutSeconds: TimeInterval = 300 // 5 minutes
+    private static let responseTimeoutSeconds: TimeInterval = 300 // 5 minutes per response
+
+    /// Tracks whether stop() was called deliberately vs process dying unexpectedly
+    private var processTerminatedDeliberately = false
 
     /// Event history cap — prevents unbounded memory growth on long sessions
     private static let maxEventCount = 200
@@ -73,12 +77,12 @@ final class ClaudeProcess: ObservableObject {
     /// Working directory for the session
     @Published var workingDirectory: String?
 
-    /// System prompt appended to the agent's role (used on first message only)
+    /// System prompt appended to the agent's role (set at process launch)
     var systemPrompt: String?
 
-    /// CLI configuration flags
+    /// CLI configuration flags (applied at process launch — changes require restart)
     @Published var effortLevel: EffortLevel = .medium
-    /// When true, effort level auto-adjusts per message complexity (default on)
+    /// When true, effort level is tracked for savings display (informational in interactive mode)
     @Published var smartEffort: Bool = true
     @Published var permissionMode: CLIPermissionMode = .bypassPermissions
     @Published var useWorktree: Bool = false
@@ -113,12 +117,10 @@ final class ClaudeProcess: ObservableObject {
     /// Used to skip closeout ceremony for trivial/empty sessions.
     var hasSubstantiveWork: Bool {
         guard !messages.isEmpty else { return false }
-        // Any tool use = real work
         let hasToolUse = messages.contains { msg in
             msg.blocks.contains { $0 is ToolUseBlock }
         }
         if hasToolUse { return true }
-        // 4+ messages = enough conversation to be worth saving
         return messages.count >= 4
     }
 
@@ -138,41 +140,54 @@ final class ClaudeProcess: ObservableObject {
 
     // MARK: - Lifecycle
 
-    /// Initialize session state — no process launched until first send()
+    /// Launch a persistent Claude CLI process.
+    /// The process stays alive for the entire session — messages are written to stdin.
     func start(directory: String? = nil, resumeSession: String? = nil) {
         stop()
         workingDirectory = directory ?? workingDirectory
         if let session = resumeSession {
             sessionId = session
         }
-        isRunning = true
         error = nil
+        processTerminatedDeliberately = false
+        launchPersistentProcess()
     }
 
-    /// Send user input to Claude — launches a new CLI process for this turn
+    /// Write a user message to the persistent Claude CLI process via stdin.
     func send(_ text: String) {
-        guard isRunning else { return }
+        guard isRunning, stdinHandle != nil else { return }
 
-        // Cancel any in-flight turn
-        cancelCurrentTurn()
+        // Interrupt any in-flight response (SIGINT, not kill)
+        if isStreaming {
+            currentProcess?.interrupt()
+            isStreaming = false
+            finalizeStreamingMessage()
+            // Brief delay for Claude CLI to process the interrupt
+            Task {
+                try? await Task.sleep(for: .milliseconds(200))
+                await writeTurn(text)
+            }
+            return
+        }
 
-        // Reset retry state for new user message
-        retryCount = 0
+        writeTurn(text)
+    }
+
+    /// Internal: prepare message and write to stdin
+    private func writeTurn(_ text: String) {
         lastPrompt = text
 
-        // Smart effort: auto-adjust effort level based on message complexity
+        // Smart effort: track for savings display (informational — effort is set at launch)
         if smartEffort {
             let routed = SmartEffortRouter.classify(text)
-            effortLevel = routed
-            // Track savings: effort downgrade from high baseline
             switch routed {
-            case .low: _pendingSavingsMultiplier = 0.50  // ~50% cheaper than high
-            case .medium: _pendingSavingsMultiplier = 0.30  // ~30% cheaper than high
+            case .low: _pendingSavingsMultiplier = 0.50
+            case .medium: _pendingSavingsMultiplier = 0.30
             case .high: _pendingSavingsMultiplier = 0.0
             }
         }
 
-        // Add user message to conversation (show original text)
+        // Add user message to conversation
         let userMessage = ConversationMessage(
             role: .user,
             blocks: [TextBlock(text: text)]
@@ -182,101 +197,153 @@ final class ClaudeProcess: ObservableObject {
         // Apply before-send transform (e.g., context reinjection)
         let promptText = onBeforeSend?(text) ?? text
 
-        // Launch process for this turn
-        launchTurn(prompt: promptText)
+        // Write JSON to stdin
+        let json: [String: Any] = [
+            "type": "user",
+            "message": [
+                "role": "user",
+                "content": promptText
+            ]
+        ]
+
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: json),
+              var jsonString = String(data: jsonData, encoding: .utf8) else {
+            error = "Failed to serialize message"
+            return
+        }
+
+        jsonString += "\n"
+
+        guard let writeData = jsonString.data(using: .utf8) else { return }
+
+        isStreaming = true
+        streamStartTime = Date()
+
+        // Write to stdin on a background thread to avoid blocking MainActor
+        let handle = stdinHandle
+        Task.detached {
+            do {
+                try handle?.write(contentsOf: writeData)
+            } catch {
+                await MainActor.run { [weak self] in
+                    let msg = "Failed to write to Claude CLI: \(error.localizedDescription)"
+                    self?.error = msg
+                    self?.isStreaming = false
+                    self?.onError?(msg)
+                }
+            }
+        }
+
+        startResponseWatchdog()
     }
 
-    /// Interrupt current operation (SIGINT)
+    /// Interrupt current operation (SIGINT) — process stays alive
     func interrupt() {
         currentProcess?.interrupt()
+        isStreaming = false
+        watchdogTask?.cancel()
+        watchdogTask = nil
+        finalizeStreamingMessage()
+    }
+
+    /// Stop the session — terminate the persistent process
+    func stop() {
+        processTerminatedDeliberately = true
+        watchdogTask?.cancel()
+        watchdogTask = nil
+        readTask?.cancel()
+        readTask = nil
+        stderrReadTask?.cancel()
+        stderrReadTask = nil
+
+        // Close stdin to signal EOF, then terminate
+        if let handle = stdinHandle {
+            try? handle.close()
+            stdinHandle = nil
+        }
+        if let proc = currentProcess, proc.isRunning {
+            proc.terminate()
+        }
+        currentProcess = nil
+        isRunning = false
         isStreaming = false
         finalizeStreamingMessage()
     }
 
-    /// Stop the session entirely
-    func stop() {
-        cancelCurrentTurn()
-        isRunning = false
-    }
-
-    /// Trigger manual context compaction, optionally with instructions about what to preserve
+    /// Trigger manual context compaction
     func compact(instructions: String? = nil) {
         let cmd = instructions.map { "/compact \($0)" } ?? "/compact"
         send(cmd)
     }
 
-    private func cancelCurrentTurn() {
-        readTask?.cancel()
-        readTask = nil
-        if let proc = currentProcess, proc.isRunning {
-            proc.terminate()
-        }
-        currentProcess = nil
-        isStreaming = false
-        finalizeStreamingMessage()
-    }
+    // MARK: - Persistent Process Launch
 
-    // MARK: - Per-Message Process Launch
-
-    private func launchTurn(prompt: String) {
+    private func launchPersistentProcess() {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: claudePath)
 
         var args = [
-            "-p", prompt,
+            "-p",
+            "--input-format", "stream-json",
             "--output-format", "stream-json",
             "--include-partial-messages",
             "--verbose"
         ]
+
         // Permission mode
         switch permissionMode {
         case .bypassPermissions:
             args += ["--dangerously-skip-permissions"]
         case .default_:
-            break // No flag needed
+            break
         case .acceptEdits:
             args += ["--permission-mode", "acceptEdits"]
         case .plan:
             args += ["--permission-mode", "plan"]
         }
-        // Effort level
+
+        // Effort level (session-level)
         args += ["--effort", effortLevel.rawValue]
+
         // Model override
         if let model = selectedModel {
             args += ["--model", model.rawValue]
         }
+
         // Worktree
         if useWorktree && sessionId == nil {
             args += ["--worktree"]
         }
+
         // Budget cap
         if maxBudgetUSD > 0 {
             args += ["--max-budget-usd", String(format: "%.2f", maxBudgetUSD)]
         }
+
+        // Resume existing session
         if let session = sessionId {
             args += ["--resume", session]
         }
-        // Add role system prompt on first turn (before session exists)
-        // Output mode prefix is prepended to the system prompt
+
+        // System prompt (set once at launch)
         let modePrefix = outputMode.systemPromptPrefix
         let fullSystemPrompt = [modePrefix, systemPrompt].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
         if sessionId == nil, !fullSystemPrompt.isEmpty {
             args += ["--append-system-prompt", fullSystemPrompt]
         }
+
         proc.arguments = args
 
-        // Unset CLAUDECODE env to avoid nested session check
+        // Environment
         var env = ProcessInfo.processInfo.environment
         env.removeValue(forKey: "CLAUDECODE")
 
-        // Auto-enable Conductor optimizations
         if optimizationsEnabled {
-            env["ENABLE_EXPERIMENTAL_MCP_CLI"] = "true"                              // On-demand MCP tool loading, ~80% fewer tokens
-            env["CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR"] = "1"                    // Prevent cd drift between bash commands
-            env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = String(autoCompactThreshold)    // User-tunable compaction
+            env["ENABLE_EXPERIMENTAL_MCP_CLI"] = "true"
+            env["CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR"] = "1"
+            env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = String(autoCompactThreshold)
         }
 
-        // Agent Teams — autonomous sub-agent spawning
         if agentTeamsEnabled {
             env["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"] = "1"
         }
@@ -287,59 +354,59 @@ final class ClaudeProcess: ObservableObject {
             proc.currentDirectoryURL = URL(fileURLWithPath: dir)
         }
 
-        let stdout = Pipe()
-        let stderr = Pipe()
-        proc.standardOutput = stdout
-        proc.standardError = stderr
-        // No stdin needed — prompt is passed via -p flag
+        // Set up all three pipes — stdin stays open for writing
+        let stdinPipe = Pipe()
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        proc.standardInput = stdinPipe
+        proc.standardOutput = stdoutPipe
+        proc.standardError = stderrPipe
+
+        stdinHandle = stdinPipe.fileHandleForWriting
 
         currentProcess = proc
-        isStreaming = true
-        streamStartTime = Date()
-        error = nil
 
         proc.terminationHandler = { [weak self] process in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+
                 self.isStreaming = false
                 self.watchdogTask?.cancel()
                 self.watchdogTask = nil
                 self.finalizeStreamingMessage()
-                self.currentProcess = nil
 
-                // Non-zero exit (except SIGINT=2) is an error
+                // If stop() was called, this is expected — don't surface error
+                guard !self.processTerminatedDeliberately else { return }
+
                 let status = process.terminationStatus
+                // SIGINT (2) is normal from interrupt(), not an error
                 if status != 0 && status != 2 {
-                    // Auto-retry for transient failures if we have a session to resume
-                    if self.retryCount < self.maxRetries, self.sessionId != nil, let prompt = self.lastPrompt {
-                        self.retryCount += 1
-                        self.error = "Retrying... (\(self.retryCount)/\(self.maxRetries + 1))"
-                        // Brief delay before retry
-                        try? await Task.sleep(for: .seconds(1))
-                        self.launchTurn(prompt: prompt)
-                    } else {
-                        let msg = "Claude CLI exited with code \(status)"
-                        self.error = msg
-                        self.onError?(msg)
-                    }
+                    let msg = "Claude CLI process exited unexpectedly (code \(status))"
+                    self.error = msg
+                    self.isRunning = false
+                    self.onError?(msg)
+                } else if status == 0 {
+                    // Clean exit (e.g., budget exhausted) — allow restart
+                    self.isRunning = false
                 }
             }
         }
 
         do {
             try proc.run()
-            startReadingOutput(from: stdout)
-            startReadingErrors(from: stderr)
-            startWatchdog()
+            isRunning = true
+            error = nil
+            startReadingOutput(from: stdoutPipe)
+            startReadingErrors(from: stderrPipe)
         } catch {
             let msg = "Failed to launch Claude CLI: \(error.localizedDescription)"
             self.error = msg
-            isStreaming = false
+            isRunning = false
             onError?(msg)
         }
     }
 
-    // MARK: - Output Reading
+    // MARK: - Output Reading (continuous for the life of the process)
 
     private func startReadingOutput(from pipe: Pipe) {
         readTask = Task.detached { [weak self] in
@@ -348,7 +415,7 @@ final class ClaudeProcess: ObservableObject {
 
             while !Task.isCancelled {
                 let newData = handle.availableData
-                if newData.isEmpty { break } // EOF
+                if newData.isEmpty { break } // EOF — process died or stdin closed
 
                 buffer.append(newData)
 
@@ -367,17 +434,17 @@ final class ClaudeProcess: ObservableObject {
     }
 
     private func startReadingErrors(from pipe: Pipe) {
-        Task.detached { [weak self] in
+        stderrReadTask = Task.detached { [weak self] in
             let handle = pipe.fileHandleForReading
-            var accumulated = ""
             while !Task.isCancelled {
                 let data = handle.availableData
                 if data.isEmpty { break }
                 if let text = String(data: data, encoding: .utf8) {
-                    accumulated += text
                     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                     await MainActor.run {
-                        print("[Claude stderr] \(trimmed)")
+                        if !trimmed.isEmpty {
+                            print("[Claude stderr] \(trimmed)")
+                        }
                         // Surface meaningful errors (skip progress/debug noise)
                         if !trimmed.isEmpty && !trimmed.hasPrefix("Downloading") && !trimmed.hasPrefix("  ") {
                             self?.lastStderrMessage = String(trimmed.prefix(200))
@@ -388,18 +455,21 @@ final class ClaudeProcess: ObservableObject {
         }
     }
 
-    /// Kill the process if it runs longer than the timeout
-    private func startWatchdog() {
+    /// Per-response watchdog — kills response if no result event within timeout
+    private func startResponseWatchdog() {
         watchdogTask?.cancel()
         watchdogTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(Self.processTimeoutSeconds))
+            try? await Task.sleep(for: .seconds(Self.responseTimeoutSeconds))
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self, self.isStreaming else { return }
-                let msg = "Process timed out after \(Int(Self.processTimeoutSeconds))s"
+                let msg = "Response timed out after \(Int(Self.responseTimeoutSeconds))s"
                 self.error = msg
                 self.onError?(msg)
-                self.currentProcess?.terminate()
+                // Interrupt the response, but keep the process alive
+                self.currentProcess?.interrupt()
+                self.isStreaming = false
+                self.finalizeStreamingMessage()
             }
         }
     }
@@ -437,11 +507,9 @@ final class ClaudeProcess: ObservableObject {
         if let model = event.model {
             currentModel = model
         }
-        // Store CLI-generated session ID for --resume on subsequent messages
         if let sid = event.sessionId {
             sessionId = sid
         }
-        // Update working directory from CLI (drives window title)
         if let cwd = event.cwd {
             workingDirectory = cwd
         }
@@ -450,8 +518,6 @@ final class ClaudeProcess: ObservableObject {
     }
 
     private func handleAssistant(_ event: AssistantEvent) {
-        // The assistant event contains the complete message
-        // If we were streaming, discard the streaming message — the assistant event supersedes it
         let hadStreaming = streamingMessage != nil
         finalizeStreamingMessage()
 
@@ -467,7 +533,6 @@ final class ClaudeProcess: ObservableObject {
             switch raw.type {
             case "text":
                 if let text = raw.text {
-                    // Parse markdown into typed blocks (code, lists, diffs, etc.)
                     blocks.append(contentsOf: MarkdownParser.parse(text))
                 }
             case "tool_use":
@@ -496,7 +561,7 @@ final class ClaudeProcess: ObservableObject {
         )
         messages.append(message)
 
-        // Fire assistant text callback with concatenated text content
+        // Fire assistant text callback
         var fullText = ""
         for raw in event.message.content {
             if raw.type == "text", let text = raw.text {
@@ -516,7 +581,6 @@ final class ClaudeProcess: ObservableObject {
     }
 
     private func handleToolResult(_ event: UserEvent) {
-        // Update the last tool_use block's status
         guard var lastMessage = messages.last, lastMessage.role == .assistant else { return }
 
         for result in event.message.content {
@@ -556,20 +620,20 @@ final class ClaudeProcess: ObservableObject {
 
     private func handleResult(_ event: ResultEvent) {
         isStreaming = false
+        watchdogTask?.cancel()
+        watchdogTask = nil
         finalizeStreamingMessage()
 
         // Capture per-turn tokens BEFORE accumulating
         let thisTurnInput = event.usage?.inputTokens ?? 0
         let thisTurnOutput = event.usage?.outputTokens ?? 0
 
-        // Accumulate totals
         totalInputTokens += thisTurnInput
         totalOutputTokens += thisTurnOutput
 
         if let cost = event.totalCostUSD {
             lastTurnCostUSD = cost
             totalCostUSD += cost
-            // Apply pending savings estimate
             let savingsMultiplier = max(_pendingSavingsMultiplier, _pendingModelSavings)
             if savingsMultiplier > 0 {
                 estimatedSavingsUSD += cost * savingsMultiplier / (1.0 - savingsMultiplier)
@@ -577,12 +641,11 @@ final class ClaudeProcess: ObservableObject {
             _pendingSavingsMultiplier = 0
             _pendingModelSavings = 0
         }
-        // Update session ID from result (should match system event)
+
         if let sid = event.sessionId {
             sessionId = sid
         }
 
-        // Fire turn-complete callback with per-turn metrics
         onTurnComplete?(TurnMetrics(
             inputTokens: thisTurnInput,
             outputTokens: thisTurnOutput,
@@ -594,7 +657,6 @@ final class ClaudeProcess: ObservableObject {
 
         onResult?(event)
 
-        // Sound + notification: response complete
         SoundManager.shared.playResponseComplete()
         SoundManager.shared.playBackgroundComplete()
         NotificationService.shared.sendCompletionNotification(
@@ -616,7 +678,6 @@ final class ClaudeProcess: ObservableObject {
         }
 
         if streamingThinkingBlock != nil {
-            // Transition from thinking to text
             finalizeStreamingThinking()
         }
 
@@ -646,12 +707,10 @@ final class ClaudeProcess: ObservableObject {
     }
 
     private func updateStreamingMessage() {
-        guard let msg = streamingMessage else { return }
+        guard streamingMessage != nil else { return }
 
-        // Find or append the streaming message
         if let lastIdx = messages.indices.last,
            messages[lastIdx].role == .assistant && messages[lastIdx].isStreaming {
-            // Update blocks in-place instead of rebuilding the entire array
             var blocks: [any ContentBlockProtocol] = []
             if let thinking = streamingThinkingBlock {
                 blocks.append(thinking)
@@ -661,7 +720,7 @@ final class ClaudeProcess: ObservableObject {
             }
             messages[lastIdx].blocks = blocks
         } else {
-            var newMsg = msg
+            var newMsg = streamingMessage!
             var blocks: [any ContentBlockProtocol] = []
             if let thinking = streamingThinkingBlock {
                 blocks.append(thinking)
@@ -693,7 +752,6 @@ final class ClaudeProcess: ObservableObject {
             msg.duration = Date().timeIntervalSince(start)
         }
 
-        // Update the message in the array
         if let lastIdx = messages.indices.last,
            messages[lastIdx].role == .assistant && messages[lastIdx].isStreaming {
             messages[lastIdx] = msg
@@ -792,32 +850,27 @@ enum CLIPermissionMode: String, CaseIterable {
     }
 }
 
-/// Smart effort routing — classifies message complexity to pick the right effort level
-/// Saves 30-50% tokens by not using high effort for simple/conversational messages
+/// Smart effort routing — classifies message complexity for savings tracking
+/// In interactive mode, effort is set at launch. This is informational for the savings display.
 enum SmartEffortRouter {
 
-    /// Classify a user message into the appropriate effort level
     static func classify(_ message: String) -> EffortLevel {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
         let lowered = trimmed.lowercased()
         let wordCount = trimmed.components(separatedBy: .whitespaces).filter { !$0.isEmpty }.count
 
-        // Very short conversational messages → low effort
         if wordCount <= 5 && isConversational(lowered) {
             return .low
         }
 
-        // Short messages without code keywords → medium
         if wordCount <= 15 && !containsComplexWork(lowered) {
             return .medium
         }
 
-        // Complex work patterns → high effort
         if containsComplexWork(lowered) {
             return .high
         }
 
-        // Default: medium for everything else
         return .medium
     }
 
@@ -886,7 +939,6 @@ enum OutputMode: String, CaseIterable {
         }
     }
 
-    /// Cycle to the next mode
     func next() -> OutputMode {
         let all = OutputMode.allCases
         guard let idx = all.firstIndex(of: self) else { return .standard }
