@@ -225,23 +225,25 @@ final class ClaudeProcess: ObservableObject {
 
         streamStartTime = Date()
 
-        // Write to stdin on a background thread to avoid blocking MainActor
-        let handle = stdinHandle
+        // Write to stdin using POSIX write — avoids NSFileHandleOperationException on dead pipes
+        let fd = stdinHandle?.fileDescriptor ?? -1
         let generation = sessionGeneration
         Task.detached {
-            do {
-                try handle?.write(contentsOf: writeData)
-                await MainActor.run { [weak self] in
-                    guard let self, self.sessionGeneration == generation else { return }
+            guard fd >= 0 else { return }
+            let result = writeData.withUnsafeBytes { ptr -> Int in
+                guard let base = ptr.baseAddress else { return -1 }
+                return Darwin.write(fd, base, ptr.count)
+            }
+            await MainActor.run { [weak self] in
+                guard let self, self.sessionGeneration == generation else { return }
+                if result > 0 {
                     self.isStreaming = true
                     self.startResponseWatchdog()
-                }
-            } catch {
-                await MainActor.run { [weak self] in
-                    guard let self, self.sessionGeneration == generation else { return }
-                    let msg = "Failed to write to Claude CLI: \(error.localizedDescription)"
+                } else {
+                    let msg = "Claude CLI process ended — restart session to continue"
                     self.error = msg
                     self.isStreaming = false
+                    self.isRunning = false
                     self.onError?(msg)
                 }
             }
@@ -382,6 +384,12 @@ final class ClaudeProcess: ObservableObject {
         proc.terminationHandler = { [weak self] process in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+
+                // Close stdin immediately — prevents writes to dead process
+                if let handle = self.stdinHandle {
+                    try? handle.close()
+                    self.stdinHandle = nil
+                }
 
                 self.isStreaming = false
                 self.watchdogTask?.cancel()

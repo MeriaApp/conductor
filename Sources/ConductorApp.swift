@@ -5,6 +5,8 @@ struct ConductorApp: App {
     @NSApplicationDelegateAdaptor(ConductorAppDelegate.self) var appDelegate
 
     init() {
+        // Ignore SIGPIPE — writing to a dead process's stdin pipe must return an error, not crash
+        signal(SIGPIPE, SIG_IGN)
         // Allow window tabbing — each window gets independent state via SessionStateContainer
         NSWindow.allowsAutomaticWindowTabbing = true
         // Request notification permission on launch so completion + permission notifications work
