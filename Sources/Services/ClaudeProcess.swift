@@ -33,7 +33,7 @@ final class ClaudeProcess: ObservableObject {
     @Published var autoCompactThreshold: Int = 85
 
     /// Agent Teams — enables Claude to autonomously spawn sub-agents for parallel work
-    @Published var agentTeamsEnabled: Bool = false
+    @Published var agentTeamsEnabled: Bool = true
 
     // MARK: - Private
 

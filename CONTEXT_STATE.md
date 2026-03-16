@@ -26,7 +26,9 @@ This is the **distributable version** of Conductor, forked from the original at 
 5. **Command Palette entries** — "Ask Gemini...", "Dev Tools", "Review with CodeRabbit", "Lint Project (SwiftLint)", "Dead Code Scan (Periphery)". All wired with shortcuts.
 
 **Build:** SUCCEEDED (Mar 12, 2026)
-**Not yet:** committed, pushed, released, notarized
+**Released:** v3.2.0 — https://github.com/MeriaApp/conductor/releases/tag/v3.2.0
+**Installed:** /Applications/Conductor.app (v3.2.0, Developer ID signed)
+**Not yet:** notarized
 
 ---
 
@@ -264,3 +266,11 @@ Apple Distribution: JESSE ROBERT MERIA (36D97ZTP6J)
 - **Notarized:** v3.0.0 was notarized (Mar 8). v3.1.0 may need re-notarization.
 - **Notarize command:** `xcrun notarytool submit app.zip --keychain-profile "Conductor" --wait && xcrun stapler staple Conductor.app`
 - **Build flags for notarization:** `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO OTHER_CODE_SIGN_FLAGS="--options=runtime --timestamp"`
+
+## Build Status
+- **Compiles:** YES (BUILD SUCCEEDED)
+- **Signed:** YES (Developer ID Application)
+- **Version:** 3.2.0
+- **Released on GitHub:** v3.2.0 (Mar 12, 2026)
+- **Installed:** /Applications/Conductor.app (v3.2.0, signature valid)
+- **Notarized:** Not yet (v3.0.0 was notarized)
