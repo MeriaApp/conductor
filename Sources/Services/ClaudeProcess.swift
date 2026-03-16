@@ -94,7 +94,7 @@ final class ClaudeProcess: ObservableObject {
     @Published var selectedModel: ModelChoice?
 
     /// Max budget in USD per session (default $5 — prevents runaway sessions)
-    var maxBudgetUSD: Double = 5.0
+    var maxBudgetUSD: Double = 0
 
     /// Per-turn cost of the most recent turn (for display)
     @Published var lastTurnCostUSD: Double = 0
