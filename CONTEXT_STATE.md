@@ -1,6 +1,6 @@
 # Context State — Conductor (Public Distribution Version)
 
-*Last updated: March 11, 2026*
+*Last updated: March 16, 2026*
 
 ## What This Is
 
@@ -11,7 +11,67 @@ This is the **distributable version** of Conductor, forked from the original at 
 
 ---
 
-## Current State: v3.2.0 — IN PROGRESS (Mar 12, 2026)
+## Current State: v3.3.0 — Autonomy Upgrade (Mar 18, 2026)
+
+### v3.3.0 Changes — Power & Autonomy
+
+**Autonomous Mode (NEW):**
+- Single toggle: bypass permissions + auto-retry empty responses + auto model routing
+- Defaults to ON — maximum power out of the box
+- Full-width amber banner below status bar when active ("AUTONOMOUS MODE" with Turn Off button)
+- Amber badge in status bar ("Autonomous")
+- Keyboard shortcut: Cmd+Shift+A
+
+**Modes Panel (NEW):**
+- "Modes" button in bottom strip opens expandable panel with 3 toggles
+- Each toggle has icon, title, clear subtitle explaining purpose, visual on/off switch
+- Autonomous (amber), Simplified View (lavender), Smart Model Routing (green)
+- Badge count shows how many modes are active
+
+**Auto-Apply Model Routing:**
+- Messages with >0.85 confidence auto-switch to cheaper models (Haiku/Sonnet)
+- Green toast "→ Haiku (auto)" for 2 seconds
+- Saves up to 95% on simple turns ("yes", "go ahead", etc.)
+
+**Auto-Retry Empty Responses:**
+- Detects <10 char response after >5s (context loss signal)
+- Automatically resends last prompt once
+- Warning only shows if retry also fails
+- Prevents the #1 UX pain point after compaction
+
+**Smart Session Handoff:**
+- On session start, auto-injects resume context from previous session (<24h, same project)
+- Toast: "Resumed from previous session"
+
+**Permission Learning:**
+- Low-risk tools (Read, Edit, Write) auto-suggest rules after 2 approvals (was 3)
+
+**Budget Display Fix:**
+- "$0 cap" no longer shown when no limit is set
+- Budget indicator hidden when maxBudgetUSD = 0
+
+**Files changed:** ClaudeProcess.swift, ModelRouter.swift, PermissionManager.swift, AppShell.swift, StatusBar.swift, InputBar.swift
+**Build:** SUCCEEDED (Mar 18, 2026)
+**Not yet:** committed, released, installed to /Applications
+
+---
+
+## Previous State: v3.2.1 — Bug Fixes (Mar 16, 2026)
+
+### v3.2.1 Changes — Critical Bug Fixes (2 items)
+
+1. **Stale session ID on project switch** (`ClaudeProcess.swift`) — When switching projects, the previous session's ID was passed as `--resume` to the new CLI process. The CLI couldn't find that session in the new directory → exit code 1. Fix: `start()` now sets `sessionId = resumeSession` (nil when not resuming) instead of only setting it when non-nil.
+
+2. **Double process launch race condition** (`ConductorApp.swift`, `ClaudeProcess.swift`) — `.id(windowId)` on `WindowContentView` caused SwiftUI to destroy and recreate the entire view when `windowId` changed from nil to UUID in `onAppear`. This launched two CLI processes. The first process's async termination handler could set `isRunning = false` on the second process. Fixes:
+   - Removed `.id(windowId)` from `WindowContentView`
+   - Added `hasInitializedSession` guard in `AppShell.onAppear` to prevent double init
+   - Added `sessionGeneration` check in termination handler to ignore stale process exits
+
+**Build:** SUCCEEDED (Mar 16, 2026)
+**Files changed:** `ConductorApp.swift`, `ClaudeProcess.swift`, `AppShell.swift`
+**Not yet:** committed, released, installed
+
+---
 
 ### v3.2.0 Changes — Toolkit Integrations (5 items)
 

@@ -11,6 +11,10 @@ final class ModelRouter: ObservableObject {
     @Published var isEnabled: Bool = true
     /// Auto-apply model suggestions (enabled by default for simple lookups)
     @Published var autoApply: Bool = true
+    /// Last auto-applied suggestion (for brief UI toast)
+    @Published var lastAutoApplied: ModelSuggestion?
+
+    static let autoApplyMinConfidence: Double = 0.85
 
     private init() {}
 

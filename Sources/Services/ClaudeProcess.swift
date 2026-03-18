@@ -27,6 +27,9 @@ final class ClaudeProcess: ObservableObject {
     /// Toggle thinking block visibility globally (Cmd+Shift+T)
     @Published var showThinking: Bool = true
 
+    /// Autonomous Mode — bypass permissions + auto-retry on empty response (ON by default for power users)
+    @Published var autonomousMode: Bool = true
+
     /// Auto-optimizations: env vars that save tokens and prevent drift
     @Published var optimizationsEnabled: Bool = true
 
@@ -55,6 +58,10 @@ final class ClaudeProcess: ObservableObject {
 
     /// Error recovery
     private var lastPrompt: String?
+    /// Auto-retry counter for empty responses (max 1 retry per turn)
+    private var emptyResponseRetryCount: Int = 0
+    /// Deferred retry — set in handleAssistant, executed in handleResult after stream ends cleanly
+    private var pendingRetryPrompt: String?
 
     /// Per-response watchdog (not per-process — process is long-lived)
     private var watchdogTask: Task<Void, Never>?
@@ -150,17 +157,23 @@ final class ClaudeProcess: ObservableObject {
         stop()
         sessionGeneration += 1
         workingDirectory = directory ?? workingDirectory
-        if let session = resumeSession {
-            sessionId = session
-        }
+        // Only resume if explicitly requested — otherwise clear stale session ID
+        sessionId = resumeSession
         error = nil
         processTerminatedDeliberately = false
+        emptyResponseRetryCount = 0
+        pendingRetryPrompt = nil
         launchPersistentProcess()
     }
 
     /// Write a user message to the persistent Claude CLI process via stdin.
     func send(_ text: String) {
-        guard isRunning, stdinHandle != nil else { return }
+        guard isRunning, stdinHandle != nil else {
+            let msg = "Session ended — restart to continue"
+            error = msg
+            onError?(msg)
+            return
+        }
 
         // Interrupt any in-flight response (SIGINT, not kill)
         if isStreaming {
@@ -381,9 +394,13 @@ final class ClaudeProcess: ObservableObject {
 
         currentProcess = proc
 
+        let launchGeneration = sessionGeneration
         proc.terminationHandler = { [weak self] process in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+
+                // Ignore termination from a previous session's process — a new one has already launched
+                guard self.sessionGeneration == launchGeneration else { return }
 
                 // Close stdin immediately — prevents writes to dead process
                 if let handle = self.stdinHandle {
@@ -591,11 +608,32 @@ final class ClaudeProcess: ObservableObject {
             onAssistantText?(fullText)
         }
 
-        // Empty response detection — signal possible context loss
-        let responseLength = fullText.trimmingCharacters(in: .whitespacesAndNewlines).count
-        let elapsed = streamStartTime.map { Date().timeIntervalSince($0) } ?? 0
-        if responseLength < 10 && elapsed > 5 {
-            onEmptyResponse?()
+        // Empty response detection — only for text-only responses (not tool use)
+        // Tool-use responses legitimately have no text — don't treat them as empty
+        let hasToolUse = event.message.content.contains { $0.type == "tool_use" }
+        let hasThinking = event.message.content.contains { $0.type == "thinking" }
+        let isFinalResponse = event.message.stopReason == "end_turn"
+
+        if !hasToolUse && !hasThinking && isFinalResponse {
+            let responseLength = fullText.trimmingCharacters(in: .whitespacesAndNewlines).count
+            let elapsed = streamStartTime.map { Date().timeIntervalSince($0) } ?? 0
+            if responseLength < 10 && elapsed > 5 {
+                if emptyResponseRetryCount == 0, let prompt = lastPrompt {
+                    emptyResponseRetryCount += 1
+                    print("[ClaudeProcess] Context may have been lost — scheduling retry")
+                    // Flag for retry — handled in handleResult after stream ends cleanly
+                    pendingRetryPrompt = prompt
+                } else {
+                    // Retry already attempted or no prompt — surface warning to user
+                    onEmptyResponse?()
+                }
+            } else {
+                // Successful non-empty response — reset retry counter
+                emptyResponseRetryCount = 0
+            }
+        } else {
+            // Tool use / thinking response — always reset retry counter
+            emptyResponseRetryCount = 0
         }
     }
 
@@ -675,6 +713,22 @@ final class ClaudeProcess: ObservableObject {
         ))
 
         onResult?(event)
+
+        // Execute deferred retry AFTER stream has ended cleanly (no SIGINT needed)
+        if let retryPrompt = pendingRetryPrompt {
+            pendingRetryPrompt = nil
+            print("[ClaudeProcess] Executing deferred retry after stream completed")
+            // Remove the empty assistant message
+            if let lastIdx = messages.indices.last, messages[lastIdx].role == .assistant {
+                messages.removeLast()
+            }
+            // Remove the user message — send() re-adds it
+            if let lastIdx = messages.indices.last, messages[lastIdx].role == .user {
+                messages.removeLast()
+            }
+            send(retryPrompt)
+            return // Skip completion sounds/notifications — retry is in progress
+        }
 
         SoundManager.shared.playResponseComplete()
         SoundManager.shared.playBackgroundComplete()

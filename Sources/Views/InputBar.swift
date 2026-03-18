@@ -964,6 +964,10 @@ struct FilePathAutocompletePopup: View {
 struct ShortcutsStrip: View {
     @EnvironmentObject private var theme: ThemeEngine
     @EnvironmentObject private var process: ClaudeProcess
+    @EnvironmentObject private var permissionManager: PermissionManager
+    @EnvironmentObject private var modelRouter: ModelRouter
+
+    @State private var showModesPanel = false
 
     var onCommandPalette: (() -> Void)?
     var onToggleVibe: (() -> Void)?
@@ -971,30 +975,165 @@ struct ShortcutsStrip: View {
     var onSessionBrowser: (() -> Void)?
 
     var body: some View {
-        HStack(spacing: 6) {
-            stripButton("command", "Palette", "Cmd+K") { onCommandPalette?() }
+        VStack(spacing: 0) {
+            // Modes panel — expandable, clear descriptions
+            if showModesPanel {
+                VStack(spacing: 0) {
+                    Rectangle().fill(theme.separator.opacity(0.2)).frame(height: 1)
 
-            stripDivider
+                    VStack(spacing: 8) {
+                        // Autonomous Mode
+                        modeToggle(
+                            icon: "bolt.shield.fill",
+                            title: "Autonomous",
+                            subtitle: "Claude runs without stopping to ask permission. Auto-retries on errors. Use when you want to give a task and walk away.",
+                            isOn: process.autonomousMode,
+                            activeColor: theme.amber
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                process.autonomousMode.toggle()
+                                if process.autonomousMode {
+                                    process.permissionMode = .bypassPermissions
+                                } else {
+                                    process.permissionMode = .default_
+                                }
+                            }
+                        }
 
-            stripButton("sparkles", process.isVibeCoder ? "Exit Vibe" : "Vibe Mode", "Ctrl+V") { onToggleVibe?() }
+                        Rectangle().fill(theme.separator.opacity(0.15)).frame(height: 1).padding(.horizontal, 8)
 
-            stripDivider
+                        // Simplified View (Vibe Mode)
+                        modeToggle(
+                            icon: "sparkles",
+                            title: "Simplified View",
+                            subtitle: "Hides tool calls, thinking blocks, and technical details. You see results, not the machinery. Good for non-technical use.",
+                            isOn: process.isVibeCoder,
+                            activeColor: theme.lavender
+                        ) {
+                            onToggleVibe?()
+                        }
 
-            stripButton("clock.arrow.circlepath", "Sessions", "Cmd+S") { onSessionBrowser?() }
+                        Rectangle().fill(theme.separator.opacity(0.15)).frame(height: 1).padding(.horizontal, 8)
 
-            stripDivider
+                        // Smart Model Routing
+                        modeToggle(
+                            icon: "arrow.triangle.branch",
+                            title: "Smart Model Routing",
+                            subtitle: "Automatically uses cheaper models (Haiku, Sonnet) for simple messages like \"yes\" or \"go ahead\". Saves up to 95% on those turns.",
+                            isOn: modelRouter.autoApply,
+                            activeColor: theme.sage
+                        ) {
+                            modelRouter.autoApply.toggle()
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(theme.elevated.opacity(0.95))
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
 
-            stripButton("keyboard", "All Shortcuts", "?") { onShowHelp?() }
+            // Bottom strip
+            HStack(spacing: 6) {
+                stripButton("command", "Palette", "Cmd+K") { onCommandPalette?() }
 
-            Spacer()
+                stripDivider
 
-            Text("Enter to send · Shift+Enter for new line · / for commands")
-                .font(.system(size: 10))
-                .foregroundColor(theme.muted.opacity(0.6))
+                // Modes button — opens the panel above
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        showModesPanel.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 9))
+                            .foregroundColor(activeModesCount > 0 ? theme.amber : theme.sky)
+                        Text("Modes")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(activeModesCount > 0 ? theme.amber : theme.secondary)
+                        if activeModesCount > 0 {
+                            Text("\(activeModesCount)")
+                                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                .foregroundColor(theme.base)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(theme.amber)
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+
+                stripDivider
+
+                stripButton("clock.arrow.circlepath", "Sessions", "Cmd+S") { onSessionBrowser?() }
+
+                stripDivider
+
+                stripButton("keyboard", "All Shortcuts", "?") { onShowHelp?() }
+
+                Spacer()
+
+                Text("Enter to send · Shift+Enter for new line · / for commands")
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.muted.opacity(0.6))
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 5)
+            .background(theme.surface.opacity(0.5))
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 5)
-        .background(theme.surface.opacity(0.5))
+    }
+
+    private var activeModesCount: Int {
+        var count = 0
+        if process.autonomousMode { count += 1 }
+        if process.isVibeCoder { count += 1 }
+        return count
+    }
+
+    private func modeToggle(icon: String, title: String, subtitle: String, isOn: Bool, activeColor: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                // Icon
+                Image(systemName: icon)
+                    .font(.system(size: 14))
+                    .foregroundColor(isOn ? activeColor : theme.muted)
+                    .frame(width: 20)
+
+                // Text
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(isOn ? activeColor : theme.primary)
+                    Text(subtitle)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.muted)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer()
+
+                // Toggle indicator
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isOn ? activeColor : theme.elevated)
+                    .frame(width: 36, height: 20)
+                    .overlay(
+                        Circle()
+                            .fill(isOn ? .white : theme.muted)
+                            .frame(width: 16, height: 16)
+                            .offset(x: isOn ? 8 : -8),
+                        alignment: .center
+                    )
+                    .animation(.easeInOut(duration: 0.15), value: isOn)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(isOn ? activeColor.opacity(0.08) : .clear)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
     }
 
     private func stripButton(_ icon: String, _ label: String, _ shortcut: String, action: @escaping () -> Void) -> some View {

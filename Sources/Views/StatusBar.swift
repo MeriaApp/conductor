@@ -122,6 +122,10 @@ struct StatusBar: View {
                 modelSuggestionPill(suggestion)
             }
 
+            if let autoApplied = modelRouter.lastAutoApplied {
+                autoAppliedIndicator(autoApplied)
+            }
+
             statusDivider
 
             contextIndicator
@@ -163,13 +167,18 @@ struct StatusBar: View {
                 statusDivider
             }
 
-            // Budget: only show when >80% used or non-default value
-            if process.maxBudgetUSD != 5.0 || process.totalCostUSD > process.maxBudgetUSD * 0.8 {
+            // Budget: only show when a cap is actively set (0 = no limit = hidden)
+            if process.maxBudgetUSD > 0 {
                 budgetIndicator
                 statusDivider
             }
 
             effortPicker
+
+            if process.autonomousMode {
+                autonomousIndicator
+                statusDivider
+            }
 
             permissionIndicator
 
@@ -549,6 +558,29 @@ struct StatusBar: View {
         .help("Agent Teams enabled — Claude can spawn sub-agents autonomously")
     }
 
+    // MARK: - Autonomous Mode
+
+    private var autonomousIndicator: some View {
+        Button {
+            process.autonomousMode = false
+            process.permissionMode = .default_
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "bolt.shield.fill")
+                    .font(.system(size: 9))
+                Text("Autonomous")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+            }
+            .foregroundColor(theme.amber)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(theme.amber.opacity(0.15))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
+        .help("Autonomous Mode active — click to disable")
+    }
+
     // MARK: - Luminance
 
     private var luminanceControl: some View {
@@ -597,6 +629,31 @@ struct StatusBar: View {
             }
         }
         .help(suggestion.reason)
+    }
+
+    // MARK: - Auto-Applied Model
+
+    private func autoAppliedIndicator(_ suggestion: ModelSuggestion) -> some View {
+        HStack(spacing: 3) {
+            Text("\u{2192} \(suggestion.model.displayName) (auto)")
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+        }
+        .foregroundColor(theme.sage)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(theme.sage.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .lineLimit(1)
+        .fixedSize()
+        .help(suggestion.reason)
+        .onAppear {
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(2))
+                withAnimation(.easeOut(duration: 0.3)) {
+                    modelRouter.lastAutoApplied = nil
+                }
+            }
+        }
     }
 
     // MARK: - Window Name

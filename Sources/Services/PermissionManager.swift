@@ -95,8 +95,10 @@ final class PermissionManager: ObservableObject {
         let key = "\(request.toolName):\(extractPattern(from: request.input))"
         approvalPatterns[key, default: 0] += 1
 
-        // After 3 approvals of same pattern, offer auto-rule
-        if approvalPatterns[key, default: 0] >= 3 {
+        // Low-risk tools learn faster (2 approvals), others need 3
+        let lowRiskTools: Set<String> = ["Read", "Edit", "Write"]
+        let threshold = lowRiskTools.contains(request.toolName) ? 2 : 3
+        if approvalPatterns[key, default: 0] >= threshold {
             suggestAutoRule(toolName: request.toolName, input: request.input)
         }
     }

@@ -34,7 +34,6 @@ struct ConductorApp: App {
     var body: some Scene {
         WindowGroup(id: "conductor", for: UUID.self) { $windowId in
             WindowContentView(hasCompletedOnboarding: hasCompletedOnboarding)
-                .id(windowId)
                 // Global services
                 .environmentObject(themeEngine)
                 .environmentObject(sessionManager)

@@ -50,6 +50,11 @@ struct ProjectSwitcher: View {
                     .font(Typography.body)
                     .foregroundColor(theme.primary)
                     .focused($isFocused)
+                    .onSubmit {
+                        if selectedIndex < filteredProjects.count {
+                            switchProject(filteredProjects[selectedIndex])
+                        }
+                    }
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 10)

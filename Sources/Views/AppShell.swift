@@ -46,6 +46,7 @@ struct AppShell: View {
     @State private var compactInstructions = ""
     @State private var showSessionDiff = false
     @State private var showProjectSwitcher = false
+    @State private var hasInitializedSession = false
     @StateObject private var closeoutManager = SessionCloseoutManager()
     /// Per-window session tracking — NOT the shared singleton's activeSession
     @State private var windowSession: Session?
@@ -60,6 +61,8 @@ struct AppShell: View {
     @State private var showEmptyResponseWarning = false
     /// Compaction toast — shows briefly when context is compacted
     @State private var compactionToastMessage: String?
+    /// Session handoff toast — shows when resuming from a previous session
+    @State private var handoffToastMessage: String?
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -67,6 +70,37 @@ struct AppShell: View {
                 // Main conversation
                 VStack(spacing: 0) {
                     StatusBar(windowLabel: $windowLabel)
+
+                    // Autonomous mode banner — persistent, unmissable
+                    if process.autonomousMode {
+                        HStack(spacing: 6) {
+                            Image(systemName: "bolt.shield.fill")
+                                .font(.system(size: 11, weight: .bold))
+                            Text("AUTONOMOUS MODE")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            Text("— permissions bypassed, auto-retry enabled")
+                                .font(.system(size: 11))
+                                .opacity(0.7)
+                            Spacer()
+                            Button("Turn Off") {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    process.autonomousMode = false
+                                    process.permissionMode = .default_
+                                }
+                            }
+                            .font(.system(size: 10, weight: .semibold))
+                            .buttonStyle(.plain)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 2)
+                            .background(.white.opacity(0.15))
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(theme.amber.opacity(0.85))
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
 
                     ZStack(alignment: .top) {
                         ConversationView(
@@ -123,6 +157,14 @@ struct AppShell: View {
                                 .padding(.top, 8)
                                 .transition(.move(edge: .top).combined(with: .opacity))
                                 .animation(.easeOut(duration: 0.3), value: compactionToastMessage)
+                        }
+
+                        // Session handoff toast — auto-dismisses after 3s
+                        if let toast = handoffToastMessage {
+                            CompactionToast(message: toast)
+                                .padding(.top, 8)
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                                .animation(.easeOut(duration: 0.3), value: handoffToastMessage)
                         }
                     }
 
@@ -523,6 +565,8 @@ struct AppShell: View {
         }
         .navigationTitle(windowTitle)
         .onAppear {
+            guard !hasInitializedSession else { return }
+            hasInitializedSession = true
             TemplateScaffolder.shared.scaffoldUserLevel()
             startNewSession()
             NotificationService.shared.requestPermission()
@@ -787,6 +831,28 @@ struct AppShell: View {
             }
             return .ignored
         }
+        // Autonomous Mode (Cmd+Shift+A)
+        .onKeyPress(characters: CharacterSet(charactersIn: "a"), phases: .down) { press in
+            guard press.modifiers.contains([.command, .shift]) else { return .ignored }
+            withAnimation(.easeInOut(duration: 0.2)) {
+                process.autonomousMode.toggle()
+                if process.autonomousMode {
+                    process.permissionMode = .bypassPermissions
+                    compactionToastMessage = "Autonomous Mode ON — permissions bypassed, auto-retry enabled"
+                } else {
+                    process.permissionMode = .default_
+                    compactionToastMessage = "Autonomous Mode OFF"
+                }
+            }
+            // Auto-dismiss toast
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(3))
+                withAnimation(.easeOut(duration: 0.3)) {
+                    compactionToastMessage = nil
+                }
+            }
+            return .handled
+        }
         // Font size: Cmd+ / Cmd- / Cmd+0
         .onKeyPress(characters: CharacterSet(charactersIn: "=+"), phases: .down) { press in
             guard press.modifiers.contains(.command) else { return .ignored }
@@ -946,10 +1012,15 @@ struct AppShell: View {
         let session = sessionManager.createSession(directory: homeDir)
         windowSession = session
 
-        // Load context from previous session in same project
-        if let resumeContext = sessionContinuity.loadSessionContext(projectPath: homeDir) {
+        // Load context from previous session in same project (if <24h old)
+        let maxHandoffAge: TimeInterval = 24 * 60 * 60
+        var resumePrompt: String?
+        if let artifact = sessionContinuity.latestArtifact(for: homeDir),
+           artifact.projectPath == homeDir,
+           Date().timeIntervalSince(artifact.timestamp) < maxHandoffAge,
+           !artifact.contextForResume.isEmpty {
+            resumePrompt = artifact.contextForResume
             contextManager.setCurrentTask("Resumed from previous session")
-            _ = resumeContext
         }
 
         // Detect git branch
@@ -1046,8 +1117,10 @@ struct AppShell: View {
                     currentModel: proc.selectedModel
                 )
                 if let suggestion = router.analyze(message: text, context: routingContext) {
-                    if router.autoApply {
+                    let isSimplerModel = suggestion.model != .opus
+                    if router.autoApply && suggestion.confidence >= ModelRouter.autoApplyMinConfidence && isSimplerModel {
                         proc.selectedModel = suggestion.model
+                        router.lastAutoApplied = suggestion
                         // Track model savings for the savings indicator
                         switch suggestion.model {
                         case .haiku: proc._pendingModelSavings = 0.95
@@ -1056,6 +1129,12 @@ struct AppShell: View {
                         }
                     } else {
                         router.suggestion = suggestion
+                    }
+                } else {
+                    // No suggestion = complex work or default → reset to Opus
+                    if proc.selectedModel != nil {
+                        proc.selectedModel = nil
+                        router.lastAutoApplied = nil
                     }
                 }
             }
@@ -1096,6 +1175,24 @@ struct AppShell: View {
         // Don't pass a session ID — let Claude CLI create one on first message
         // The CLI-generated session ID is captured from the system event
         process.start(directory: homeDir)
+
+        // Inject resume prompt as first message after process starts
+        if let prompt = resumePrompt {
+            Task { @MainActor in
+                // Brief delay to let the process initialize before sending
+                try? await Task.sleep(for: .milliseconds(500))
+                guard process.isRunning else { return }
+                process.send(prompt)
+                handoffToastMessage = "Resumed from previous session"
+                // Auto-dismiss after 3 seconds
+                try? await Task.sleep(for: .seconds(3))
+                if handoffToastMessage == "Resumed from previous session" {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        handoffToastMessage = nil
+                    }
+                }
+            }
+        }
     }
 
     private func detectGitBranch(in directory: String) {
@@ -1442,6 +1539,32 @@ struct AppShell: View {
             }
         })
 
+        // Autonomous Mode
+        commands.append(CommandItem(
+            name: "Toggle Autonomous Mode\(process.autonomousMode ? " ✓" : "")",
+            icon: "bolt.shield.fill",
+            shortcut: "Cmd+Shift+A",
+            subtitle: process.autonomousMode ? "Disable autonomous operation" : "Bypass permissions + auto-retry for unattended operation",
+            category: .session
+        ) {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                process.autonomousMode.toggle()
+                if process.autonomousMode {
+                    process.permissionMode = .bypassPermissions
+                    compactionToastMessage = "Autonomous Mode ON — permissions bypassed, auto-retry enabled"
+                } else {
+                    process.permissionMode = .default_
+                    compactionToastMessage = "Autonomous Mode OFF"
+                }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(3))
+                withAnimation(.easeOut(duration: 0.3)) {
+                    compactionToastMessage = nil
+                }
+            }
+        })
+
         // Thinking toggle
         commands.append(CommandItem(
             name: "Toggle Thinking\(process.showThinking ? " ✓" : "")",
@@ -1537,11 +1660,11 @@ struct AppShell: View {
         commands.append(CommandItem(
             name: "Set Budget Cap",
             icon: "dollarsign.circle",
-            subtitle: String(format: "Current: $%.0f", process.maxBudgetUSD),
+            subtitle: process.maxBudgetUSD > 0 ? String(format: "Current: $%.0f", process.maxBudgetUSD) : "Current: No limit",
             category: .session
         ) {
-            // Cycle between budget values (default $5)
-            let budgets: [Double] = [5.0, 10.0, 25.0, 50.0, 0]
+            // Cycle between budget values (0 = no limit)
+            let budgets: [Double] = [0, 5.0, 10.0, 25.0, 50.0]
             let currentIdx = budgets.firstIndex(of: process.maxBudgetUSD) ?? 0
             process.maxBudgetUSD = budgets[(currentIdx + 1) % budgets.count]
         })
