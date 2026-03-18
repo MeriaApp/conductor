@@ -1,6 +1,6 @@
 # Context State — Conductor (Public Distribution Version)
 
-*Last updated: March 16, 2026*
+*Last updated: March 18, 2026*
 
 ## What This Is
 
@@ -11,7 +11,32 @@ This is the **distributable version** of Conductor, forked from the original at 
 
 ---
 
-## Current State: v3.3.0 — Autonomy Upgrade (Mar 18, 2026)
+## Current State: v4.1.0 — Critical Freeze Fix (Mar 18, 2026)
+
+### v4.1.0 Changes — Session Stability
+
+**Critical fix: Empty response detection was killing sessions**
+- The empty response auto-retry triggered on tool-use responses (Read, Edit, Bash) because it only counted text blocks — tool use blocks were ignored. Any response with tools + no text + >5s delay triggered SIGINT mid-stream, corrupting the CLI process.
+- Fix: Detection now skips tool-use and thinking-only responses. Only fires on `end_turn` with genuinely empty text.
+- Fix: Retry deferred to `handleResult` (after stream ends) instead of `handleAssistant` (mid-stream). No more SIGINT.
+
+**Model routing reset (was sticky)**
+- Once auto-routed to Haiku for a simple message, `selectedModel` was never reset. All subsequent messages displayed as Haiku even when the router had no suggestion (complex work). Now resets to nil (Opus) when `analyze()` returns nil.
+
+**Dead process feedback**
+- `send()` was silently returning when the CLI process was dead — input cleared, message vanished, no error. Now shows "Session ended — restart to continue."
+
+**Release script fix**
+- Added `-project Conductor.xcodeproj` to avoid ambiguity from multiple .xcodeproj files. Added build failure check.
+
+**Files changed:** ClaudeProcess.swift, AppShell.swift, scripts/release.sh
+**Build:** SUCCEEDED (Developer ID signed)
+**Released:** v4.1.0 — https://github.com/MeriaApp/conductor/releases/tag/v4.1.0
+**Installed:** /Applications/Conductor.app (v4.1.0, signature valid)
+
+---
+
+## Previous State: v3.3.0 — Autonomy Upgrade (Mar 18, 2026)
 
 ### v3.3.0 Changes — Power & Autonomy
 
@@ -320,17 +345,14 @@ Apple Distribution: JESSE ROBERT MERIA (36D97ZTP6J)
 ## Build Status
 - **Compiles:** YES (BUILD SUCCEEDED)
 - **Signed:** YES (Developer ID Application)
-- **Version:** 3.1.0
-- **Released on GitHub:** v3.1.0 (Mar 11, 2026) — includes all changes from v2.1.0 through v3.1.0
-- **Installed:** /Applications/Conductor.app (v3.1.0, signature valid)
-- **Notarized:** v3.0.0 was notarized (Mar 8). v3.1.0 may need re-notarization.
+- **Version:** 4.1.0
+- **Released on GitHub:** v4.1.0 (Mar 18, 2026)
+- **Installed:** /Applications/Conductor.app (v4.1.0, signature valid)
+- **Notarized:** Not yet (v3.0.0 was last notarized)
 - **Notarize command:** `xcrun notarytool submit app.zip --keychain-profile "Conductor" --wait && xcrun stapler staple Conductor.app`
 - **Build flags for notarization:** `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO OTHER_CODE_SIGN_FLAGS="--options=runtime --timestamp"`
 
-## Build Status
-- **Compiles:** YES (BUILD SUCCEEDED)
-- **Signed:** YES (Developer ID Application)
-- **Version:** 3.2.0
+## Previous Build Status (v3.2.0)
 - **Released on GitHub:** v3.2.0 (Mar 12, 2026)
 - **Installed:** /Applications/Conductor.app (v3.2.0, signature valid)
 - **Notarized:** Not yet (v3.0.0 was notarized)
