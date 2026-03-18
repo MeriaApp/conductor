@@ -31,7 +31,7 @@ xcodegen generate 2>&1 | tail -1
 
 # 3. Build with Developer ID signing
 echo "[3/6] Building (signed with Developer ID)..."
-xcodebuild -scheme "$SCHEME" \
+xcodebuild -project Conductor.xcodeproj -scheme "$SCHEME" \
     -destination 'platform=macOS' \
     -configuration Release \
     build \
@@ -41,6 +41,12 @@ xcodebuild -scheme "$SCHEME" \
     ENABLE_HARDENED_RUNTIME=YES \
     OTHER_CODE_SIGN_FLAGS="--options=runtime" \
     2>&1 | tail -3
+
+# Verify build succeeded
+if [ ${PIPESTATUS[0]} -ne 0 ]; then
+    echo "ERROR: Build failed!"
+    exit 1
+fi
 
 # 4. Find and zip the built app
 echo "[4/6] Packaging..."
