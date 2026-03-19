@@ -50,6 +50,7 @@
 		99B18301E46DA11BA632DE2C /* FilePreviewPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DEEB949CDC8B4B28608445B /* FilePreviewPanel.swift */; };
 		9F9675FA0249066CA6761FA9 /* MCPServerOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCF70171CF390632B6882E4F /* MCPServerOverlay.swift */; };
 		A4C58C744207344F63017EE0 /* SessionArtifact.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00B4CC3D3403FFCA54535A52 /* SessionArtifact.swift */; };
+		AB310AD739D73C7C1A1D5689 /* SafeguardsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D253D0C2253C0D66131F47FE /* SafeguardsManager.swift */; };
 		B3CDCF9F732A4524DA32644C /* PermissionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C09B0721910F2B086CF0913F /* PermissionManager.swift */; };
 		B80676A76EAF2B2E9613B732 /* ThemeEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4F509A0262521DF7AFCD394 /* ThemeEngine.swift */; };
 		BBCF29246881C1332F5A577C /* MCPServerManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AFE62927B4BAF218E5CD7C7 /* MCPServerManager.swift */; };
@@ -145,6 +146,7 @@
 		CCF70171CF390632B6882E4F /* MCPServerOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPServerOverlay.swift; sourceTree = "<group>"; };
 		CE9FC3B5614F5C0BDF0B796D /* MultiAgentSplitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiAgentSplitView.swift; sourceTree = "<group>"; };
 		D0BD7BE0B37A5C62CEDBE420 /* HelpOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpOverlay.swift; sourceTree = "<group>"; };
+		D253D0C2253C0D66131F47FE /* SafeguardsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafeguardsManager.swift; sourceTree = "<group>"; };
 		D6DF5A4F717C67DE2B704399 /* SessionContinuity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionContinuity.swift; sourceTree = "<group>"; };
 		DB9C3210CDB7D731B47086DF /* StatusBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBar.swift; sourceTree = "<group>"; };
 		E438C348E4B261AA32994C19 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
@@ -212,6 +214,7 @@
 				C09B0721910F2B086CF0913F /* PermissionManager.swift */,
 				7EBC909D6FE17D565C9D2377 /* PluginManager.swift */,
 				22AD112B8464DA1BE2D8F5CD /* ProjectManager.swift */,
+				D253D0C2253C0D66131F47FE /* SafeguardsManager.swift */,
 				023DFCAA142B328DCE2A859A /* SessionCloseoutManager.swift */,
 				D6DF5A4F717C67DE2B704399 /* SessionContinuity.swift */,
 				1CE26D65DCC399A3B0163B73 /* SessionManager.swift */,
@@ -430,6 +433,7 @@
 				0EEED2C9F52C6FAD763F34B9 /* PluginManager.swift in Sources */,
 				DF57655977AE6A06E1C6FFD3 /* ProjectManager.swift in Sources */,
 				F3A0D1F8B6EC71A7789324CB /* ProjectSwitcher.swift in Sources */,
+				AB310AD739D73C7C1A1D5689 /* SafeguardsManager.swift in Sources */,
 				2487E2F75197BC6FDB181E06 /* SearchBar.swift in Sources */,
 				243E40E48F9BEFF326994E7B /* Session.swift in Sources */,
 				A4C58C744207344F63017EE0 /* SessionArtifact.swift in Sources */,

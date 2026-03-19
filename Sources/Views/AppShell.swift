@@ -267,19 +267,24 @@ struct AppShell: View {
                 .transition(.opacity)
             }
 
-            // Error banner
+            // Error banner — non-blocking for retries, actionable only for unrecoverable errors
             if let error = process.error {
+                let isRetrying = error.hasPrefix("Retrying") || error.hasPrefix("Reconnecting")
                 VStack {
                     HStack(spacing: 8) {
-                        Image(systemName: error.hasPrefix("Retrying")
-                            ? "arrow.clockwise"
-                            : "exclamationmark.triangle.fill")
-                            .foregroundColor(error.hasPrefix("Retrying") ? theme.amber : theme.rose)
+                        if isRetrying {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .scaleEffect(0.7)
+                        } else {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(theme.rose)
+                        }
                         Text(error)
                             .font(Typography.caption)
                             .foregroundColor(theme.bright)
                         Spacer()
-                        if !error.hasPrefix("Retrying") {
+                        if !isRetrying {
                             if process.sessionId != nil {
                                 Button("Resume Session") {
                                     process.start(resumeSession: process.sessionId)
@@ -288,17 +293,25 @@ struct AppShell: View {
                                 .foregroundColor(theme.sky)
                                 .buttonStyle(.plain)
                             }
-                            Button("Retry") {
+                            Button("New Session") {
                                 startNewSession()
                             }
                             .font(Typography.caption)
                             .foregroundColor(theme.sky)
                             .buttonStyle(.plain)
+                            Button {
+                                process.error = nil
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(theme.muted)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                     .padding(12)
                     .background(
-                        (error.hasPrefix("Retrying") ? theme.amber : theme.rose)
+                        (isRetrying ? theme.amber : theme.rose)
                             .opacity(0.15)
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -307,6 +320,7 @@ struct AppShell: View {
 
                     Spacer()
                 }
+                .animation(.easeInOut(duration: 0.2), value: error)
             }
 
             // Health check banner (amber for warnings, red for errors)
@@ -1060,10 +1074,47 @@ struct AppShell: View {
         }
 
         process.onError = { msg in
-            NotificationService.shared.sendCompletionNotification(
-                title: "Error",
-                body: msg
-            )
+            // Only notify for non-retry errors
+            if !msg.hasPrefix("Retrying") && !msg.hasPrefix("Reconnecting") {
+                NotificationService.shared.sendCompletionNotification(
+                    title: "Error",
+                    body: msg
+                )
+            }
+        }
+
+        process.onAutoRetry = { [self] attempt, maxAttempts in
+            // Show non-blocking retry toast
+            self.compactionToastMessage = "Retrying... attempt \(attempt)/\(maxAttempts)"
+            // Auto-dismiss after 5 seconds (will be replaced by next retry or success)
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(5))
+                if let msg = self.compactionToastMessage, msg.hasPrefix("Retrying") {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        self.compactionToastMessage = nil
+                    }
+                }
+            }
+        }
+
+        process.onAutoRetrySuccess = { [self] in
+            // Clear retry-related UI
+            withAnimation(.easeOut(duration: 0.3)) {
+                if let msg = self.compactionToastMessage, msg.hasPrefix("Retrying") {
+                    self.compactionToastMessage = nil
+                }
+                self.showEmptyResponseWarning = false
+            }
+            // Brief success toast
+            self.compactionToastMessage = "Reconnected successfully"
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(2))
+                if self.compactionToastMessage == "Reconnected successfully" {
+                    withAnimation(.easeOut(duration: 0.3)) {
+                        self.compactionToastMessage = nil
+                    }
+                }
+            }
         }
 
         process.onToolUse = { toolName, input in
@@ -1075,7 +1126,22 @@ struct AppShell: View {
         }
 
         process.onEmptyResponse = { [self] in
-            self.showEmptyResponseWarning = true
+            // In autonomous mode, don't show blocking warning — the auto-retry in
+            // ClaudeProcess already handled the first retry attempt silently
+            if proc.autonomousMode {
+                // Show brief non-blocking toast instead
+                self.compactionToastMessage = "Context may have been lost — consider starting a new session"
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(5))
+                    if self.compactionToastMessage?.contains("Context may have been lost") == true {
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            self.compactionToastMessage = nil
+                        }
+                    }
+                }
+            } else {
+                self.showEmptyResponseWarning = true
+            }
         }
 
         pipeline.onCompactionDetected = { [self] message in

@@ -16,6 +16,9 @@ final class ContextStateManager: ObservableObject {
 
     let maxContextTokens = 200_000
 
+    /// Context health — aggregates token usage, image risk, and warning level into a single status
+    @Published var contextHealth: ContextHealth = .healthy
+
     init() {}
 
     /// Last turn's input tokens — reflects actual context window size
@@ -35,6 +38,27 @@ final class ContextStateManager: ObservableObject {
         // Per-turn inputTokens = actual context window size for that turn
         contextPercentage = Double(metrics.inputTokens) / Double(maxContextTokens)
         warningLevel = ContextWarningLevel.from(percentage: contextPercentage)
+        updateContextHealth()
+    }
+
+    /// Recalculate context health from all signals
+    func updateContextHealth() {
+        let imageTokens = SafeguardsManager.shared.totalImageTokens
+        let imageCount = SafeguardsManager.shared.trackedImageFiles.count
+
+        if contextPercentage > 0.85 {
+            contextHealth = .critical(reason: "Context at \(Int(contextPercentage * 100))% — auto-compact imminent")
+        } else if contextPercentage > 0.75 {
+            if imageCount > 0 {
+                contextHealth = .warning(reason: "Context \(Int(contextPercentage * 100))% + \(imageCount) image\(imageCount == 1 ? "" : "s") (~\(imageTokens / 1000)K tokens)")
+            } else {
+                contextHealth = .warning(reason: "Context at \(Int(contextPercentage * 100))% — consider compacting")
+            }
+        } else if imageCount >= 3 {
+            contextHealth = .warning(reason: "\(imageCount) images in context (~\(imageTokens / 1000)K tokens) — may cause blowup")
+        } else {
+            contextHealth = .healthy
+        }
     }
 
     /// Estimate tokens for a pending message before sending
@@ -209,5 +233,41 @@ enum ContextWarningLevel: String {
         if percentage > 0.75 { return .critical }
         if percentage > 0.50 { return .warm }
         return .none
+    }
+}
+
+/// Aggregated context health — combines token percentage + image risk
+enum ContextHealth: Equatable {
+    case healthy
+    case warning(reason: String)
+    case critical(reason: String)
+
+    var label: String {
+        switch self {
+        case .healthy: return "Healthy"
+        case .warning: return "Warning"
+        case .critical: return "Critical"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .healthy: return "heart.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .critical: return "xmark.octagon.fill"
+        }
+    }
+
+    var isHealthy: Bool {
+        if case .healthy = self { return true }
+        return false
+    }
+
+    var reason: String? {
+        switch self {
+        case .healthy: return nil
+        case .warning(let r): return r
+        case .critical(let r): return r
+        }
     }
 }

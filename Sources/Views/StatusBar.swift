@@ -130,6 +130,10 @@ struct StatusBar: View {
 
             contextIndicator
 
+            if !contextManager.contextHealth.isHealthy {
+                contextHealthIndicator
+            }
+
             if contextPipeline.compactionDetected || contextPipeline.snapshotTaken {
                 compactionIndicator
             }
@@ -277,6 +281,30 @@ struct StatusBar: View {
                 .font(Typography.statusBar)
                 .foregroundColor(color)
         }
+    }
+
+    // MARK: - Context Health
+
+    private var contextHealthIndicator: some View {
+        let health = contextManager.contextHealth
+        let isCritical: Bool = {
+            if case .critical = health { return true }
+            return false
+        }()
+        let color = isCritical ? theme.rose : theme.amber
+
+        return HStack(spacing: 3) {
+            Image(systemName: health.icon)
+                .font(.system(size: 9))
+            Text(health.label)
+                .font(Typography.statusBarSecondary)
+        }
+        .foregroundColor(color)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 1)
+        .background(color.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 3))
+        .help(health.reason ?? "Context is healthy")
     }
 
     // MARK: - Compaction

@@ -65,10 +65,25 @@ final class ClaudeProcess: ObservableObject {
 
     /// Per-response watchdog (not per-process — process is long-lived)
     private var watchdogTask: Task<Void, Never>?
-    private static let responseTimeoutSeconds: TimeInterval = 300 // 5 minutes per response
+    private static let responseTimeoutSeconds: TimeInterval = 600 // 10 minutes per response (generous for complex ops)
 
     /// Tracks whether stop() was called deliberately vs process dying unexpectedly
     private var processTerminatedDeliberately = false
+
+    // MARK: - Auto-Retry Infrastructure
+
+    /// Current auto-retry attempt (0 = no retry in progress)
+    private var autoRetryAttempt: Int = 0
+    /// Max auto-retry attempts before giving up and showing blocking error
+    private static let maxAutoRetries = 3
+    /// Base delay for exponential backoff (1s, 2s, 4s)
+    private static let retryBaseDelaySeconds: TimeInterval = 1.0
+    /// Active retry task (cancelled on stop() or successful recovery)
+    private var autoRetryTask: Task<Void, Never>?
+    /// Callback when auto-retry begins — passes attempt number and max for UI display
+    var onAutoRetry: ((Int, Int) -> Void)?
+    /// Callback when auto-retry succeeds — UI should clear retry banners
+    var onAutoRetrySuccess: (() -> Void)?
 
     /// Event history cap — prevents unbounded memory growth on long sessions
     private static let maxEventCount = 200
@@ -163,15 +178,39 @@ final class ClaudeProcess: ObservableObject {
         processTerminatedDeliberately = false
         emptyResponseRetryCount = 0
         pendingRetryPrompt = nil
+        autoRetryAttempt = 0
+        autoRetryTask?.cancel()
+        autoRetryTask = nil
         launchPersistentProcess()
     }
 
     /// Write a user message to the persistent Claude CLI process via stdin.
     func send(_ text: String) {
         guard isRunning, stdinHandle != nil else {
-            let msg = "Session ended — restart to continue"
-            error = msg
-            onError?(msg)
+            // Auto-restart: save the message, relaunch with session resume, then resend
+            print("[ClaudeProcess] Process not running — auto-restarting to deliver message")
+            let savedSessionId = sessionId
+            autoRetryTask?.cancel()
+            autoRetryTask = Task { [weak self] in
+                guard let self else { return }
+                // Brief pause before restart
+                try? await Task.sleep(for: .seconds(Self.retryBaseDelaySeconds))
+                guard !Task.isCancelled else { return }
+                self.processTerminatedDeliberately = false
+                self.error = "Reconnecting..."
+                self.launchPersistentProcess()
+                // Wait for process to initialize
+                try? await Task.sleep(for: .milliseconds(500))
+                guard !Task.isCancelled, self.isRunning else {
+                    self.error = "Session ended — restart to continue"
+                    self.onError?(self.error ?? "")
+                    return
+                }
+                self.error = nil
+                self.onAutoRetrySuccess?()
+                self.send(text)
+            }
+            _ = savedSessionId // suppress unused warning
             return
         }
 
@@ -253,11 +292,10 @@ final class ClaudeProcess: ObservableObject {
                     self.isStreaming = true
                     self.startResponseWatchdog()
                 } else {
-                    let msg = "Claude CLI process ended — restart session to continue"
-                    self.error = msg
+                    // Write failed — pipe is dead. Auto-retry by restarting process.
                     self.isStreaming = false
                     self.isRunning = false
-                    self.onError?(msg)
+                    self.scheduleAutoRetry(reason: "Connection lost", resendPrompt: text)
                 }
             }
         }
@@ -275,6 +313,8 @@ final class ClaudeProcess: ObservableObject {
     /// Stop the session — terminate the persistent process
     func stop() {
         processTerminatedDeliberately = true
+        autoRetryTask?.cancel()
+        autoRetryTask = nil
         pendingSendTask?.cancel()
         pendingSendTask = nil
         watchdogTask?.cancel()
@@ -417,15 +457,17 @@ final class ClaudeProcess: ObservableObject {
                 guard !self.processTerminatedDeliberately else { return }
 
                 let status = process.terminationStatus
+                self.isRunning = false
+
                 if status != 0 && status != 2 {
-                    // Unexpected exit — surface error
-                    let msg = "Claude CLI process exited unexpectedly (code \(status))"
-                    self.error = msg
-                    self.isRunning = false
-                    self.onError?(msg)
+                    // Unexpected exit — auto-retry with session resume
+                    let reason = "Process exited (code \(status))"
+                    self.scheduleAutoRetry(reason: reason, resendPrompt: self.lastPrompt)
                 } else {
-                    // Clean exit (0) or SIGINT (2) — process is dead either way
-                    self.isRunning = false
+                    // Clean exit (0) or SIGINT (2) — auto-restart if we have a session to resume
+                    if self.sessionId != nil && !self.processTerminatedDeliberately {
+                        self.scheduleAutoRetry(reason: "Process ended", resendPrompt: nil)
+                    }
                 }
             }
         }
@@ -434,13 +476,26 @@ final class ClaudeProcess: ObservableObject {
             try proc.run()
             isRunning = true
             error = nil
+            // Successful launch — reset retry counter
+            if autoRetryAttempt > 0 {
+                print("[ClaudeProcess] Auto-retry succeeded on attempt \(autoRetryAttempt)")
+                autoRetryAttempt = 0
+                onAutoRetrySuccess?()
+            }
             startReadingOutput(from: stdoutPipe)
             startReadingErrors(from: stderrPipe)
         } catch {
-            let msg = "Failed to launch Claude CLI: \(error.localizedDescription)"
-            self.error = msg
             isRunning = false
-            onError?(msg)
+            // CLI not found = unrecoverable. Other launch failures = retry.
+            let isCliMissing = error.localizedDescription.contains("No such file")
+                || error.localizedDescription.contains("not a valid")
+            if isCliMissing {
+                let msg = "Claude CLI not found — install with: npm install -g @anthropic-ai/claude-code"
+                self.error = msg
+                onError?(msg)
+            } else {
+                scheduleAutoRetry(reason: "Launch failed: \(error.localizedDescription)", resendPrompt: nil)
+            }
         }
     }
 
@@ -494,18 +549,99 @@ final class ClaudeProcess: ObservableObject {
     }
 
     /// Per-response watchdog — interrupts response if no result event within timeout
+    /// Auto-retries the last prompt instead of blocking with an error
     private func startResponseWatchdog() {
         watchdogTask?.cancel()
         watchdogTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(Self.responseTimeoutSeconds))
             guard !Task.isCancelled else { return }
             guard let self, self.isStreaming else { return }
-            let msg = "Response timed out after \(Int(Self.responseTimeoutSeconds))s"
-            self.error = msg
-            self.onError?(msg)
+            print("[ClaudeProcess] Response timed out after \(Int(Self.responseTimeoutSeconds))s — auto-retrying")
             self.currentProcess?.interrupt()
             self.isStreaming = false
             self.finalizeStreamingMessage()
+            // Auto-retry the last prompt
+            if let prompt = self.lastPrompt {
+                self.scheduleAutoRetry(reason: "Response timed out", resendPrompt: prompt)
+            } else {
+                self.error = "Response timed out — send a new message to continue"
+            }
+        }
+    }
+
+    // MARK: - Auto-Retry with Exponential Backoff
+
+    /// Schedule an automatic retry with exponential backoff (1s, 2s, 4s).
+    /// Preserves context by resuming the existing session.
+    /// Only shows a blocking error after all retries are exhausted.
+    private func scheduleAutoRetry(reason: String, resendPrompt: String?) {
+        autoRetryAttempt += 1
+
+        guard autoRetryAttempt <= Self.maxAutoRetries else {
+            // All retries exhausted — show blocking error
+            autoRetryAttempt = 0
+            let msg = "\(reason) — automatic recovery failed after \(Self.maxAutoRetries) attempts"
+            error = msg
+            onError?(msg)
+            return
+        }
+
+        let attempt = autoRetryAttempt
+        let delay = Self.retryBaseDelaySeconds * pow(2.0, Double(attempt - 1)) // 1s, 2s, 4s
+        let retryMsg = "Retrying... attempt \(attempt)/\(Self.maxAutoRetries)"
+        error = retryMsg
+        onAutoRetry?(attempt, Self.maxAutoRetries)
+
+        print("[ClaudeProcess] \(reason) — scheduling auto-retry \(attempt)/\(Self.maxAutoRetries) in \(delay)s")
+
+        autoRetryTask?.cancel()
+        autoRetryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            guard let self else { return }
+
+            // Save context state before retrying
+            let savedSessionId = self.sessionId
+            let savedDirectory = self.workingDirectory
+
+            // Kill any lingering process state without triggering deliberate termination flag
+            self.readTask?.cancel()
+            self.readTask = nil
+            self.stderrReadTask?.cancel()
+            self.stderrReadTask = nil
+            if let handle = self.stdinHandle {
+                try? handle.close()
+                self.stdinHandle = nil
+            }
+            if let proc = self.currentProcess, proc.isRunning {
+                proc.terminate()
+            }
+            self.currentProcess = nil
+
+            // Relaunch — resume existing session to preserve context
+            self.processTerminatedDeliberately = false
+            self.sessionGeneration += 1
+
+            if let sid = savedSessionId {
+                self.sessionId = sid
+            }
+            self.workingDirectory = savedDirectory
+
+            self.launchPersistentProcess()
+
+            // If we have a prompt to resend, wait for process then send
+            if let prompt = resendPrompt, self.isRunning {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard !Task.isCancelled, self.isRunning else { return }
+                // Remove the user message that was already added to messages array
+                // (writeTurn adds it, but the write failed — avoid duplicate)
+                if let lastIdx = self.messages.indices.last,
+                   self.messages[lastIdx].role == .user {
+                    self.messages.removeLast()
+                }
+                self.error = nil
+                self.send(prompt)
+            }
         }
     }
 
@@ -681,6 +817,27 @@ final class ClaudeProcess: ObservableObject {
         watchdogTask = nil
         finalizeStreamingMessage()
 
+        // Handle error results (API errors, rate limits, overloaded) with auto-retry
+        if event.isError == true {
+            let errorText = event.result ?? "Unknown API error"
+            let isRecoverable = isRecoverableError(errorText)
+            if isRecoverable {
+                print("[ClaudeProcess] Recoverable error from CLI: \(errorText) — auto-retrying")
+                scheduleAutoRetry(reason: errorText, resendPrompt: lastPrompt)
+                return
+            }
+            // Non-recoverable error (auth failure, etc.) — show blocking error
+            error = errorText
+            onError?(errorText)
+            return
+        }
+
+        // Successful result — reset auto-retry counter
+        if autoRetryAttempt > 0 {
+            autoRetryAttempt = 0
+            onAutoRetrySuccess?()
+        }
+
         // Capture per-turn tokens BEFORE accumulating
         let thisTurnInput = event.usage?.inputTokens ?? 0
         let thisTurnOutput = event.usage?.outputTokens ?? 0
@@ -736,6 +893,33 @@ final class ClaudeProcess: ObservableObject {
             title: "Claude finished",
             body: String(messages.last?.copyText().prefix(100) ?? "Response complete")
         )
+    }
+
+    /// Determine if an error is recoverable (worth auto-retrying) vs permanent (auth, billing)
+    private func isRecoverableError(_ errorText: String) -> Bool {
+        let lowered = errorText.lowercased()
+        // Permanent errors — don't retry
+        let permanentPatterns = [
+            "authentication", "auth failed", "invalid api key", "unauthorized",
+            "billing", "payment required", "account suspended",
+            "permission denied", "forbidden",
+            "not found", "cli not found"
+        ]
+        if permanentPatterns.contains(where: { lowered.contains($0) }) {
+            return false
+        }
+        // Recoverable — rate limits, overloaded, timeouts, server errors
+        let recoverablePatterns = [
+            "rate limit", "overloaded", "capacity", "timeout", "timed out",
+            "server error", "500", "502", "503", "529",
+            "connection", "network", "socket", "reset",
+            "try again", "retry", "temporary", "transient"
+        ]
+        if recoverablePatterns.contains(where: { lowered.contains($0) }) {
+            return true
+        }
+        // Default: treat unknown errors as recoverable (better to retry than block)
+        return true
     }
 
     // MARK: - Streaming Message Assembly

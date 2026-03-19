@@ -48,7 +48,17 @@ final class ContextPreservationPipeline: ObservableObject {
 
         switch toolName {
         case "Read":
-            break // Reads don't modify files — skip tracking to keep snapshots clean
+            // Track image file reads for context health warnings
+            if let path = json["file_path"] as? String {
+                let ext = (path as NSString).pathExtension.lowercased()
+                let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "tiff", "bmp", "svg"]
+                if imageExtensions.contains(ext) {
+                    // Estimate ~85K tokens per retina screenshot, ~20K for smaller images
+                    let estimatedTokens = path.contains("screenshot") ? 85_000 : 20_000
+                    SafeguardsManager.shared.trackImageFile(path: path, estimatedTokens: estimatedTokens)
+                    contextManager.updateContextHealth()
+                }
+            }
 
         case "Edit":
             if let path = json["file_path"] as? String {

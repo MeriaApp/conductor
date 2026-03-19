@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Full guided setup wizard for new users
-/// 5-step flow: Welcome → Node.js Check → CLI Install → Authentication → Shortcuts
+/// 6-step flow: Welcome → Node.js Check → CLI Install → Authentication → Safeguards → Shortcuts
 struct OnboardingView: View {
     @EnvironmentObject private var theme: ThemeEngine
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
@@ -24,12 +24,16 @@ struct OnboardingView: View {
     @State private var testOutput: String?
     @State private var isCheckingAuth = false
 
+    // Safeguards state
+    @State private var safeguardsInstalled = false
+    @State private var isInstallingSafeguards = false
+
     // Confirmation state — explain before triggering system dialogs
     @State private var showInstallConfirm = false
     @State private var showAuthConfirm = false
     @State private var showTestConfirm = false
 
-    private let totalSteps = 5
+    private let totalSteps = 6
 
     var body: some View {
         VStack(spacing: 0) {
@@ -46,6 +50,8 @@ struct OnboardingView: View {
                     cliInstallStep
                 case 3:
                     authStep
+                case 4:
+                    safeguardsStep
                 default:
                     shortcutsStep
                 }
@@ -127,6 +133,7 @@ struct OnboardingView: View {
         case 1: return nodeFound // Node.js must be found
         case 2: return cliFound // CLI must be installed
         case 3: return true // Auth is recommended but not blocking
+        case 4: return true // Safeguards recommended but not blocking
         default: return true
         }
     }
@@ -520,7 +527,131 @@ struct OnboardingView: View {
         }
     }
 
-    // MARK: - Step 5: Shortcuts
+    // MARK: - Step 5: Safeguards
+
+    private var safeguardsStep: some View {
+        VStack(spacing: 16) {
+            Image(systemName: safeguardsInstalled ? "checkmark.shield.fill" : "shield.lefthalf.filled")
+                .font(.system(size: 40))
+                .foregroundColor(safeguardsInstalled ? theme.sage : theme.sky)
+
+            Text("Crash Safeguards")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundColor(theme.bright)
+
+            if safeguardsInstalled {
+                VStack(spacing: 8) {
+                    Text("Safeguards installed")
+                        .font(Typography.body)
+                        .foregroundColor(theme.sage)
+
+                    Text("Screenshot hook, binary deny rules, and quality rules are active.")
+                        .font(Typography.caption)
+                        .foregroundColor(theme.muted)
+                        .multilineTextAlignment(.center)
+                }
+            } else if isInstallingSafeguards {
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    Text("Installing safeguards...")
+                        .font(Typography.body)
+                        .foregroundColor(theme.secondary)
+                }
+            } else {
+                VStack(spacing: 16) {
+                    Text("Protect Claude Code sessions from common crashes\ncaused by large images and binary files.")
+                        .font(Typography.body)
+                        .foregroundColor(theme.secondary)
+                        .multilineTextAlignment(.center)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        safeguardRow(
+                            "camera.viewfinder",
+                            "Screenshot Hook",
+                            "Intercepts retina screenshots, resizes to safe dimensions, files into project"
+                        )
+                        safeguardRow(
+                            "nosign",
+                            "Binary Deny Rules",
+                            "Blocks video, audio, archives, and design files from being read into context"
+                        )
+                        safeguardRow(
+                            "doc.text",
+                            "Quality Rules",
+                            "Context management, session hygiene, and coding standards"
+                        )
+                    }
+                    .padding(12)
+                    .background(theme.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                    HStack(spacing: 12) {
+                        Button {
+                            installSafeguards()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "shield.lefthalf.filled")
+                                Text("Install Safeguards")
+                            }
+                            .font(Typography.bodyBold)
+                            .foregroundColor(theme.base)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 8)
+                            .background(theme.sky)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                        }
+                        .buttonStyle(.plain)
+
+                        Button("Skip") {
+                            withAnimation { step += 1 }
+                        }
+                        .buttonStyle(.plain)
+                        .font(Typography.caption)
+                        .foregroundColor(theme.muted)
+                    }
+
+                    Text("Installs to ~/.claude/ — safe to re-run, never overwrites existing files.")
+                        .font(Typography.caption)
+                        .foregroundColor(theme.muted)
+                        .multilineTextAlignment(.center)
+                }
+            }
+        }
+    }
+
+    private func safeguardRow(_ icon: String, _ title: String, _ detail: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 14))
+                .foregroundColor(theme.sky)
+                .frame(width: 20)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(Typography.bodyBold)
+                    .foregroundColor(theme.primary)
+                Text(detail)
+                    .font(Typography.caption)
+                    .foregroundColor(theme.muted)
+            }
+
+            Spacer()
+        }
+    }
+
+    private func installSafeguards() {
+        isInstallingSafeguards = true
+        Task {
+            SafeguardsManager.shared.installGlobally()
+            await MainActor.run {
+                isInstallingSafeguards = false
+                safeguardsInstalled = true
+            }
+        }
+    }
+
+    // MARK: - Step 6: Shortcuts
 
     private var shortcutsStep: some View {
         VStack(spacing: 16) {

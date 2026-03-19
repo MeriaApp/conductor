@@ -12,6 +12,7 @@ final class TemplateScaffolder {
 
     /// Scaffold user-level ~/.claude/ with universal instructions.
     /// Only creates files that don't already exist — never overwrites.
+    /// Also installs safeguards (screenshot hook, deny rules, quality rules).
     func scaffoldUserLevel() {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let claudeDir = home.appendingPathComponent(".claude")
@@ -21,10 +22,14 @@ final class TemplateScaffolder {
         writeIfMissing(claudeDir.appendingPathComponent("CLAUDE.md"), content: Templates.userCLAUDE)
         writeIfMissing(rulesDir.appendingPathComponent("coding-standards.md"), content: Templates.codingStandards)
         writeIfMissing(rulesDir.appendingPathComponent("git-workflow.md"), content: Templates.gitWorkflow)
+
+        // Install safeguards — screenshot hook, binary deny rules, quality rules
+        SafeguardsManager.shared.installGlobally()
     }
 
     /// Scaffold project-level .claude/ in the given directory.
     /// Only creates files that don't already exist — never overwrites.
+    /// Also installs project-level safeguards.
     func scaffoldProject(at directory: URL) {
         let claudeDir = directory.appendingPathComponent(".claude")
         let rulesDir = claudeDir.appendingPathComponent("rules")
@@ -47,6 +52,9 @@ final class TemplateScaffolder {
         writeIfMissing(skillsDir.appendingPathComponent("debug/SKILL.md"), content: Templates.debugSkill)
         writeIfMissing(skillsDir.appendingPathComponent("audit/SKILL.md"), content: Templates.auditSkill)
         writeIfMissing(skillsDir.appendingPathComponent("release/SKILL.md"), content: Templates.releaseSkill)
+
+        // Safeguards — screenshot hook, deny rules, quality rules at project level
+        SafeguardsManager.shared.installForProject(at: directory)
     }
 
     /// Check whether project-level scaffolding exists
