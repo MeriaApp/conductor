@@ -234,9 +234,9 @@ struct StatusBar: View {
                     .font(Typography.statusBar)
                     .foregroundColor(theme.bright)
 
-                if process.selectedModel != nil,
-                   !formatModelName(process.currentModel).lowercased().contains(process.selectedModel!.rawValue) {
-                    Text("→ \(process.selectedModel!.displayName)")
+                if let selected = process.selectedModel,
+                   !formatModelName(process.currentModel).lowercased().contains(selected.rawValue) {
+                    Text("→ \(selected.displayName)")
                         .font(Typography.statusBarSecondary)
                         .foregroundColor(theme.sky)
                 }

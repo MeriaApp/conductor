@@ -18,6 +18,8 @@ final class SafeguardsManager: ObservableObject {
     // MARK: - Constants
 
     private static let screenshotHookFilename = "process-screenshot.sh"
+    private static let blockDestructiveHookFilename = "block-destructive-commands.sh"
+    private static let saveContextHookFilename = "save-context-before-compact.sh"
     private static let maxTrackedImages = 20
 
     /// Binary file extensions that should be denied
@@ -34,6 +36,13 @@ final class SafeguardsManager: ObservableObject {
         ("binary-file-handling.md", Rules.binaryFileHandling),
         ("context-management.md", Rules.contextManagement),
         ("quality-standard.md", Rules.qualityStandard),
+        ("git-workflow.md", Rules.gitWorkflow),
+        ("coding-standards.md", Rules.codingStandards),
+        ("gemini-orchestration.md", Rules.geminiOrchestration),
+        ("full-app-audit.md", Rules.fullAppAudit),
+        ("file-hygiene.md", Rules.fileHygiene),
+        ("screenshots.md", Rules.screenshots),
+        ("capabilities.md", Rules.capabilities),
     ]
 
     private let fileManager = FileManager.default
@@ -80,8 +89,12 @@ final class SafeguardsManager: ObservableObject {
         createDirIfNeeded(globalRulesDir)
 
         installScreenshotHook(hooksDir: globalHooksDir)
+        installBlockDestructiveHook(hooksDir: globalHooksDir)
+        installSaveContextHook(hooksDir: globalHooksDir)
         installDenyRules(settingsPath: globalSettingsPath)
         registerScreenshotHookInSettings(settingsPath: globalSettingsPath, hooksDir: globalHooksDir)
+        registerBlockDestructiveHookInSettings(settingsPath: globalSettingsPath, hooksDir: globalHooksDir)
+        registerSaveContextHookInSettings(settingsPath: globalSettingsPath, hooksDir: globalHooksDir)
         installRuleFiles(rulesDir: globalRulesDir)
 
         checkInstallationState()
@@ -110,11 +123,15 @@ final class SafeguardsManager: ObservableObject {
         createDirIfNeeded(rulesDir)
 
         installScreenshotHook(hooksDir: hooksDir)
+        installBlockDestructiveHook(hooksDir: hooksDir)
+        installSaveContextHook(hooksDir: hooksDir)
         installRuleFiles(rulesDir: rulesDir)
 
-        // Project-level settings.json for deny rules
+        // Project-level settings.json for deny rules and hooks
         installDenyRules(settingsPath: settingsPath)
         registerScreenshotHookInSettings(settingsPath: settingsPath, hooksDir: hooksDir)
+        registerBlockDestructiveHookInSettings(settingsPath: settingsPath, hooksDir: hooksDir)
+        registerSaveContextHookInSettings(settingsPath: settingsPath, hooksDir: hooksDir)
     }
 
     // MARK: - Screenshot Hook Toggle
@@ -177,6 +194,34 @@ final class SafeguardsManager: ObservableObject {
         try? fileManager.removeItem(atPath: hookPath)
     }
 
+    private func installBlockDestructiveHook(hooksDir: String) {
+        let hookPath = "\(hooksDir)/\(Self.blockDestructiveHookFilename)"
+        guard !fileManager.fileExists(atPath: hookPath) else { return }
+
+        try? HookScript.blockDestructiveCommands.write(
+            toFile: hookPath, atomically: true, encoding: .utf8
+        )
+
+        try? fileManager.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: hookPath
+        )
+    }
+
+    private func installSaveContextHook(hooksDir: String) {
+        let hookPath = "\(hooksDir)/\(Self.saveContextHookFilename)"
+        guard !fileManager.fileExists(atPath: hookPath) else { return }
+
+        try? HookScript.saveContextBeforeCompact.write(
+            toFile: hookPath, atomically: true, encoding: .utf8
+        )
+
+        try? fileManager.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: hookPath
+        )
+    }
+
     // MARK: - Private: Settings.json Hooks Registration
 
     private func registerScreenshotHookInSettings(settingsPath: String, hooksDir: String) {
@@ -230,6 +275,54 @@ final class SafeguardsManager: ObservableObject {
         return preToolUse.contains { entry in
             let command = entry["command"] as? String ?? ""
             return command.contains(Self.screenshotHookFilename)
+        }
+    }
+
+    private func registerBlockDestructiveHookInSettings(settingsPath: String, hooksDir: String) {
+        var settings = readSettings(at: settingsPath) ?? [:]
+        let hookPath = "\(hooksDir)/\(Self.blockDestructiveHookFilename)"
+
+        // Check if already registered
+        if settingsContainHook(settings, event: "PreToolUse", filename: Self.blockDestructiveHookFilename) { return }
+
+        var hooks = settings["hooks"] as? [String: Any] ?? [:]
+        var preToolUse = hooks["PreToolUse"] as? [[String: Any]] ?? []
+
+        preToolUse.append([
+            "command": hookPath,
+            "matcher": "Bash",
+        ])
+
+        hooks["PreToolUse"] = preToolUse
+        settings["hooks"] = hooks
+        writeSettings(settings, to: settingsPath)
+    }
+
+    private func registerSaveContextHookInSettings(settingsPath: String, hooksDir: String) {
+        var settings = readSettings(at: settingsPath) ?? [:]
+        let hookPath = "\(hooksDir)/\(Self.saveContextHookFilename)"
+
+        // Check if already registered
+        if settingsContainHook(settings, event: "PreCompact", filename: Self.saveContextHookFilename) { return }
+
+        var hooks = settings["hooks"] as? [String: Any] ?? [:]
+        var preCompact = hooks["PreCompact"] as? [[String: Any]] ?? []
+
+        preCompact.append([
+            "command": hookPath,
+        ])
+
+        hooks["PreCompact"] = preCompact
+        settings["hooks"] = hooks
+        writeSettings(settings, to: settingsPath)
+    }
+
+    private func settingsContainHook(_ settings: [String: Any], event: String, filename: String) -> Bool {
+        guard let hooks = settings["hooks"] as? [String: Any],
+              let entries = hooks[event] as? [[String: Any]] else { return false }
+        return entries.contains { entry in
+            let command = entry["command"] as? String ?? ""
+            return command.contains(filename)
         }
     }
 
@@ -458,6 +551,93 @@ private enum HookScript {
     echo "${output}" >&2
     exit 2
     """
+
+    static let blockDestructiveCommands = """
+    #!/bin/bash
+    # Hook: block-destructive-commands (PreToolUse on Bash)
+    # Blocks dangerous commands that could destroy work or compromise security.
+    # Exit 2 = block + stderr shown to Claude as feedback.
+
+    input=$(cat)
+    tool_name=$(echo "$input" | jq -r '.tool_name // empty' 2>/dev/null || echo "")
+
+    [ "$tool_name" != "Bash" ] && exit 0
+
+    command=$(echo "$input" | jq -r '.tool_input.command // empty' 2>/dev/null || echo "")
+    [ -z "$command" ] && exit 0
+
+    # Block rm -rf / rm -fr (suggest trash instead)
+    if echo "$command" | grep -qE 'rm\\s+-(rf|fr)\\s'; then
+      echo "BLOCKED: rm -rf is destructive and irreversible." >&2
+      echo "Use 'trash' (brew install trash) or move to a temp directory instead." >&2
+      echo "If you truly need to delete, ask the user for explicit confirmation first." >&2
+      exit 2
+    fi
+
+    # Block git push --force
+    if echo "$command" | grep -qE 'git\\s+push.*--force'; then
+      echo "BLOCKED: Force push is destructive and can overwrite remote history." >&2
+      echo "Use 'git push' without --force, or ask the user for explicit confirmation." >&2
+      exit 2
+    fi
+
+    # Block direct push to main/master
+    if echo "$command" | grep -qE 'git\\s+push\\s+(origin\\s+)?(main|master)\\b'; then
+      current_branch=$(git branch --show-current 2>/dev/null || echo "")
+      if [ "$current_branch" = "main" ] || [ "$current_branch" = "master" ]; then
+        echo "BLOCKED: Pushing directly to $current_branch." >&2
+        echo "Create a feature branch first, or ask the user for explicit confirmation." >&2
+        exit 2
+      fi
+    fi
+
+    # Block sudo
+    if echo "$command" | grep -qE '^\\s*sudo\\s'; then
+      echo "BLOCKED: sudo commands require explicit user confirmation." >&2
+      echo "Describe what you need to do and ask the user to run it manually." >&2
+      exit 2
+    fi
+
+    # Block pipe-to-shell attacks
+    if echo "$command" | grep -qE '(curl|wget)\\s.*\\|\\s*(bash|sh|zsh)'; then
+      echo "BLOCKED: Piping downloads directly to shell is a security risk." >&2
+      echo "Download the script first, review it, then execute." >&2
+      exit 2
+    fi
+
+    # Block disk-level destructive commands
+    if echo "$command" | grep -qE '^\\s*(mkfs|dd|fdisk|diskutil\\s+eraseDisk)\\s'; then
+      echo "BLOCKED: Disk-level operations are extremely destructive." >&2
+      echo "Ask the user to run this manually after review." >&2
+      exit 2
+    fi
+
+    exit 0
+    """
+
+    static let saveContextBeforeCompact = """
+    #!/bin/bash
+    # Hook: save-context-before-compact (PreCompact)
+    # Before context gets compressed, inject project state so it survives compaction.
+    # Stdout from PreCompact hooks is added to Claude's context.
+
+    # Try common state file locations
+    for state_file in \\
+      "./CONTEXT_STATE.md" \\
+      "./context_state.md" \\
+      "./CLAUDE.md" \\
+      "./.claude/CONTEXT_STATE.md"; do
+      if [ -f "$state_file" ]; then
+        echo "=== Project State (preserved from $state_file) ==="
+        cat "$state_file"
+        echo "=== End Project State ==="
+        exit 0
+      fi
+    done
+
+    # No state file found -- that's fine
+    exit 0
+    """
 }
 
 // MARK: - Embedded Rule Content
@@ -554,5 +734,160 @@ private enum Rules {
     3. Full-path validation -- trace changed behavior
     4. Run: build (required), tests, lint
     5. Negative testing -- 3-5 edge cases
+    """
+
+    static let gitWorkflow = """
+    # Git Workflow
+
+    - Only commit when explicitly asked.
+    - Stage specific files by name -- never git add -A blindly.
+    - Commit messages: focus on "why" not "what." Imperative mood.
+    - Create new commits. Don't amend unless explicitly asked.
+    - Never force push to main/master.
+    - Never skip hooks (--no-verify) unless explicitly asked.
+    """
+
+    static let codingStandards = """
+    # Coding Standards
+
+    - Always read a file before editing it. Never edit blind.
+    - Prefer the smallest diff that achieves the goal.
+    - Don't refactor surrounding code unless asked.
+    - Don't add docstrings, comments, or type annotations to unchanged code.
+    - If something is unused, delete it completely. No _unused renames.
+    - Never hardcode secrets, tokens, or credentials.
+    - Validate at system boundaries. Trust internal code.
+    - No placeholder logic, no TODO stubs -- production-ready on first write.
+    - No temporary patches. Find and fix root causes, not symptoms.
+    """
+
+    static let geminiOrchestration = """
+    # Gemini CLI Orchestration
+
+    Gemini CLI gives Claude a second brain -- a different model with different strengths.
+
+    ## When Gemini Beats Claude
+
+    - Code review after >100-line changes (83% Aider accuracy vs 72%)
+    - Full codebase scanning >200K tokens (1M context window)
+    - Bulk text processing (Gemini Flash is free, 60 req/min)
+    - Large file analysis (50K+ lines, fits without chunking)
+    - Second opinion on architecture (different training data)
+
+    ## How to Call
+
+    ```bash
+    cd /tmp && gemini -p "prompt" --output-format text 2>&1
+    cd /tmp && gemini -p "prompt" -m gemini-2.5-flash --output-format text 2>&1
+    cd /tmp && cat /path/to/file | gemini -p "Review for bugs" --output-format text 2>&1
+    ```
+
+    ## Rules
+
+    1. Claude writes code. Gemini reviews. Never apply blindly (~30% false positives).
+    2. Claude decides. Gemini advises. No flip-flopping.
+    3. No secrets in prompts.
+    4. Max 2 delegations per task.
+    5. Run from /tmp, not ~ (avoids .Trash permission errors).
+    """
+
+    static let fullAppAudit = """
+    # Full App Audit
+
+    When asked for a "full app audit" or "engineering audit", run this standard.
+
+    ## Audit Dimensions
+
+    1. **Code Health** -- dead code, race conditions, memory leaks, swallowed errors, state consistency, perf, concurrency
+    2. **Engineering Quality** -- architecture violations, duplicated logic, fragile patterns, missing validation, tech debt
+    3. **Platform Compliance** -- store guidelines, privacy, permissions, accessibility, deprecated APIs
+
+    ## Execution Rules
+
+    - Use parallel agents for different directories/concerns
+    - Cite every finding: `file_path:line_number`
+    - Severity: P0 (crash/rejection/data loss), P1 (user-facing bugs), P2 (tech debt), P3 (improvement)
+    - No false positives -- read full code path before flagging
+    - Don't fix anything -- audit only
+    - Save to `<project>/ENGINEERING_AUDIT_<YYYY_MM>.md`
+    """
+
+    static let fileHygiene = """
+    # File Hygiene
+
+    ## The _review/ System
+
+    Staging area for suspected unused files. Never delete files directly.
+
+    1. Move suspected unused files to `_review/`
+    2. Log every move in `_review/REVIEW_LOG.md` (date, original path, reason)
+    3. Developer reviews periodically: delete or restore
+    4. Organize by category in subfolders, not flat dumps
+
+    ## Screenshots & Test Artifacts
+
+    Never write screenshots or test output to project roots:
+    - Test screenshots -> `<project>/test-artifacts/` (gitignored)
+    - Hook-filed screenshots -> `<project>/screenshots/` (gitignored)
+    - Marketing screenshots -> `<project>/Screenshots/` (tracked)
+
+    Never write PNGs or test output to home directory.
+    """
+
+    static let screenshots = """
+    # Screenshot Management
+
+    ## After Using a Screenshot
+
+    Move processed screenshots to `_used/`:
+    ```bash
+    mv screenshots/filename.png screenshots/_used/
+    ```
+
+    Exceptions -- keep if: user says to save it, it's a marketing asset, it's a bug report, or it documents UI state for reference.
+
+    ## Auto-Cleanup
+
+    Screenshots older than 7 days in `_used/` are safe to delete:
+    ```bash
+    find screenshots/_used -name "*.png" -mtime +7 -delete
+    ```
+
+    ## Rules
+
+    - Move processed screenshots to `_used/` after reading
+    - File screenshots into projects with descriptive names when they have lasting value
+    - Main screenshots folder should stay clean (0-3 files)
+    """
+
+    static let capabilities = """
+    # Available Capabilities
+
+    Use these proactively -- don't wait to be asked.
+
+    ## Active Hooks (fire automatically)
+
+    - **Screenshot interceptor** (PreToolUse/Read) -- resizes retina images, files to `project/screenshots/`, blocks oversized reads
+    - **Destructive command blocker** (PreToolUse/Bash) -- blocks `rm -rf`, force push, sudo, pipe-to-shell, disk ops
+    - **Context preservation** (PreCompact) -- injects CONTEXT_STATE.md before compaction
+
+    ## Built-in Commands
+
+    - `/compact` -- run every 20-30 min on deep sessions, or when context >70%
+    - `/compact "preserve: <details>"` -- preserve specific context
+    - `/clear` -- between unrelated tasks
+    - `/context` -- check usage before it becomes a problem
+
+    ## Multi-AI Orchestration
+
+    After changes >100 lines, delegate to Gemini CLI for review:
+    ```bash
+    cd /tmp && git -C <project> diff | gemini -p "Review for bugs" --output-format text 2>&1
+    ```
+    ~30% false positive rate. Evaluate findings. See `gemini-orchestration.md`.
+
+    ## Subagents
+
+    Spawn parallel agents for audits, research, large refactors, and exploration.
     """
 }

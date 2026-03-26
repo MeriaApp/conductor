@@ -89,6 +89,10 @@ final class ClaudeProcess: ObservableObject {
     private static let maxEventCount = 200
     private static let eventTrimTarget = 150
 
+    /// Message history cap — prevents unbounded memory growth on long sessions
+    private static let maxMessageCount = 500
+    private static let messageTrimTarget = 400
+
     /// Stderr output (surfaced to UI instead of hidden)
     @Published var lastStderrMessage: String?
 
@@ -252,6 +256,7 @@ final class ClaudeProcess: ObservableObject {
             blocks: [TextBlock(text: text)]
         )
         messages.append(userMessage)
+        trimMessagesIfNeeded()
 
         // Apply before-send transform (e.g., context reinjection)
         let promptText = onBeforeSend?(text) ?? text
@@ -732,6 +737,7 @@ final class ClaudeProcess: ObservableObject {
             isStreaming: false
         )
         messages.append(message)
+        trimMessagesIfNeeded()
 
         // Fire assistant text callback
         var fullText = ""
@@ -942,7 +948,11 @@ final class ClaudeProcess: ObservableObject {
             streamingTextBlock = TextBlock(text: "")
         }
 
-        streamingTextBlock!.text += text
+        guard streamingTextBlock != nil else {
+            print("[ClaudeProcess] streamingTextBlock unexpectedly nil after initialization — skipping text delta")
+            return
+        }
+        streamingTextBlock?.text += text
         updateStreamingMessage()
     }
 
@@ -959,7 +969,11 @@ final class ClaudeProcess: ObservableObject {
             streamingThinkingBlock = ThinkingBlock(text: "", isCollapsed: false, isStreaming: true)
         }
 
-        streamingThinkingBlock!.text += text
+        guard streamingThinkingBlock != nil else {
+            print("[ClaudeProcess] streamingThinkingBlock unexpectedly nil after initialization — skipping thinking delta")
+            return
+        }
+        streamingThinkingBlock?.text += text
         updateStreamingMessage()
     }
 
@@ -976,8 +990,7 @@ final class ClaudeProcess: ObservableObject {
                 blocks.append(text)
             }
             messages[lastIdx].blocks = blocks
-        } else {
-            var newMsg = streamingMessage!
+        } else if var newMsg = streamingMessage {
             var blocks: [any ContentBlockProtocol] = []
             if let thinking = streamingThinkingBlock {
                 blocks.append(thinking)
@@ -987,16 +1000,16 @@ final class ClaudeProcess: ObservableObject {
             }
             newMsg.blocks = blocks
             messages.append(newMsg)
+            trimMessagesIfNeeded()
         }
     }
 
     private func finalizeStreamingThinking() {
-        if streamingThinkingBlock != nil {
-            streamingThinkingBlock!.isStreaming = false
-            streamingThinkingBlock!.isCollapsed = true
-            if let start = streamStartTime {
-                streamingThinkingBlock!.duration = Date().timeIntervalSince(start)
-            }
+        guard streamingThinkingBlock != nil else { return }
+        streamingThinkingBlock?.isStreaming = false
+        streamingThinkingBlock?.isCollapsed = true
+        if let start = streamStartTime {
+            streamingThinkingBlock?.duration = Date().timeIntervalSince(start)
         }
     }
 
@@ -1018,6 +1031,22 @@ final class ClaudeProcess: ObservableObject {
         streamingTextBlock = nil
         streamingThinkingBlock = nil
         streamStartTime = nil
+    }
+
+    /// Trim messages array when it exceeds the cap, dropping oldest non-system messages.
+    private func trimMessagesIfNeeded() {
+        guard messages.count > Self.maxMessageCount else { return }
+        let excess = messages.count - Self.messageTrimTarget
+        // Find the first N non-system messages to drop
+        var removedCount = 0
+        messages.removeAll { msg in
+            guard removedCount < excess else { return false }
+            if msg.role != .system {
+                removedCount += 1
+                return true
+            }
+            return false
+        }
     }
 }
 

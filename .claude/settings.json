@@ -1,4 +1,5 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
     "allow": [
       "Bash(# *)",
@@ -34,8 +35,52 @@
       "Bash(claude *)",
       "Bash(curl *)",
       "Bash(which *)",
-      "Bash(echo *)"
+      "Bash(echo *)",
+      "Bash(gemini *)",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "Agent",
+      "WebFetch",
+      "WebSearch"
     ],
-    "deny": []
-  }
+    "deny": [
+      "Read(*.mp4)",
+      "Read(*.mov)",
+      "Read(*.avi)",
+      "Read(*.mkv)",
+      "Read(*.mp3)",
+      "Read(*.wav)",
+      "Read(*.flac)",
+      "Read(*.aac)",
+      "Read(*.zip)",
+      "Read(*.tar.gz)",
+      "Read(*.rar)",
+      "Read(*.7z)",
+      "Read(*.dmg)",
+      "Read(*.iso)",
+      "Read(*.psd)",
+      "Read(*.ai)",
+      "Read(*.sketch)",
+      "Read(*.fig)",
+      "Read(~/.ssh/**)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.azure/**)",
+      "Read(~/.kube/**)",
+      "Read(~/.docker/config.json)",
+      "Read(~/.npmrc)",
+      "Read(~/.pypirc)",
+      "Read(~/.git-credentials)",
+      "Read(~/.gem/credentials)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Read(**/*.gpg)",
+      "Read(**/*.cert)",
+      "Read(**/*.crt)"
+    ]
+  },
+  "effortLevel": "high"
 }

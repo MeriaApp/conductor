@@ -30,6 +30,7 @@ final class HooksManager: ObservableObject {
         ("Notification", "Runs when Claude sends a notification."),
         ("Stop", "Runs when Claude finishes responding."),
         ("SubagentStop", "Runs when a sub-agent finishes."),
+        ("PreCompact", "Runs before context compaction. Stdout is added to context."),
         ("SessionStart", "Runs when a new session begins."),
         ("SessionEnd", "Runs when a session ends."),
     ]

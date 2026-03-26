@@ -147,10 +147,17 @@ final class PermissionManager: ObservableObject {
         let destructivePatterns = [
             "rm -rf", "rm -r", "git reset --hard", "git push --force",
             "git push -f", "git checkout -- .", "drop table", "DROP TABLE",
-            "kill -9", "pkill", "sudo"
+            "kill -9", "pkill", "sudo",
+            "mkfs ", "dd if=", "fdisk ", "diskutil eraseDisk",
         ]
         for pattern in destructivePatterns {
             if input.contains(pattern) { return .critical }
+        }
+
+        // Pipe-to-shell: curl/wget piped to bash/sh/zsh
+        let pipeToShellPattern = #"(curl|wget)\s.*\|\s*(bash|sh|zsh)"#
+        if input.range(of: pipeToShellPattern, options: .regularExpression) != nil {
+            return .critical
         }
 
         // System-level commands
