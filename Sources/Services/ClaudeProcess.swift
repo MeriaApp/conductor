@@ -21,6 +21,15 @@ final class ClaudeProcess: ObservableObject {
     @Published var totalOutputTokens: Int = 0
     @Published var error: String?
 
+    /// Process health state — drives the status bar health indicator
+    enum ProcessHealth: String {
+        case healthy    // Process running, responsive
+        case retrying   // Auto-retry in progress
+        case dead       // Process died, retries exhausted
+        case stopped    // Deliberately stopped
+    }
+    @Published var processHealth: ProcessHealth = .stopped
+
     /// Vibe Coder Mode — strips UI to essentials (no tool blocks, no thinking, simplified status)
     @Published var isVibeCoder: Bool = false
 
@@ -69,6 +78,10 @@ final class ClaudeProcess: ObservableObject {
 
     /// Tracks whether stop() was called deliberately vs process dying unexpectedly
     private var processTerminatedDeliberately = false
+
+    /// Guard against send() auto-restart infinite recursion
+    private var sendRestartAttempts: Int = 0
+    private static let maxSendRestartAttempts = 2
 
     // MARK: - Auto-Retry Infrastructure
 
@@ -191,9 +204,23 @@ final class ClaudeProcess: ObservableObject {
     /// Write a user message to the persistent Claude CLI process via stdin.
     func send(_ text: String) {
         guard isRunning, stdinHandle != nil else {
+            // Guard against infinite recursion — max 2 restart attempts from send()
+            sendRestartAttempts += 1
+            guard sendRestartAttempts <= Self.maxSendRestartAttempts else {
+                sendRestartAttempts = 0
+                processHealth = .dead
+                let msg = "Session ended — could not restart process"
+                error = msg
+                onError?(msg)
+                NotificationService.shared.sendCriticalNotification(
+                    title: "Claude Process Failed",
+                    body: "Could not restart after \(Self.maxSendRestartAttempts) attempts. Start a new session."
+                )
+                return
+            }
+
             // Auto-restart: save the message, relaunch with session resume, then resend
-            print("[ClaudeProcess] Process not running — auto-restarting to deliver message")
-            let savedSessionId = sessionId
+            print("[ClaudeProcess] Process not running — auto-restarting to deliver message (attempt \(sendRestartAttempts)/\(Self.maxSendRestartAttempts))")
             autoRetryTask?.cancel()
             autoRetryTask = Task { [weak self] in
                 guard let self else { return }
@@ -202,10 +229,13 @@ final class ClaudeProcess: ObservableObject {
                 guard !Task.isCancelled else { return }
                 self.processTerminatedDeliberately = false
                 self.error = "Reconnecting..."
+                self.processHealth = .retrying
                 self.launchPersistentProcess()
                 // Wait for process to initialize
                 try? await Task.sleep(for: .milliseconds(500))
                 guard !Task.isCancelled, self.isRunning else {
+                    self.sendRestartAttempts = 0
+                    self.processHealth = .dead
                     self.error = "Session ended — restart to continue"
                     self.onError?(self.error ?? "")
                     return
@@ -214,9 +244,11 @@ final class ClaudeProcess: ObservableObject {
                 self.onAutoRetrySuccess?()
                 self.send(text)
             }
-            _ = savedSessionId // suppress unused warning
             return
         }
+
+        // Successful send path — reset restart counter
+        sendRestartAttempts = 0
 
         // Interrupt any in-flight response (SIGINT, not kill)
         if isStreaming {
@@ -340,6 +372,7 @@ final class ClaudeProcess: ObservableObject {
         currentProcess = nil
         isRunning = false
         isStreaming = false
+        processHealth = .stopped
         finalizeStreamingMessage()
     }
 
@@ -465,8 +498,13 @@ final class ClaudeProcess: ObservableObject {
                 self.isRunning = false
 
                 if status != 0 && status != 2 {
-                    // Unexpected exit — auto-retry with session resume
+                    // Unexpected exit — notify + auto-retry with session resume
                     let reason = "Process exited (code \(status))"
+                    print("[ClaudeProcess] Unexpected termination: \(reason)")
+                    NotificationService.shared.sendCriticalNotification(
+                        title: "Claude Process Crashed",
+                        body: "Exit code \(status) — attempting recovery..."
+                    )
                     self.scheduleAutoRetry(reason: reason, resendPrompt: self.lastPrompt)
                 } else {
                     // Clean exit (0) or SIGINT (2) — auto-restart if we have a session to resume
@@ -481,6 +519,7 @@ final class ClaudeProcess: ObservableObject {
             try proc.run()
             isRunning = true
             error = nil
+            processHealth = .healthy
             // Successful launch — reset retry counter
             if autoRetryAttempt > 0 {
                 print("[ClaudeProcess] Auto-retry succeeded on attempt \(autoRetryAttempt)")
@@ -583,14 +622,20 @@ final class ClaudeProcess: ObservableObject {
         autoRetryAttempt += 1
 
         guard autoRetryAttempt <= Self.maxAutoRetries else {
-            // All retries exhausted — show blocking error
+            // All retries exhausted — show blocking error + critical notification
             autoRetryAttempt = 0
+            processHealth = .dead
             let msg = "\(reason) — automatic recovery failed after \(Self.maxAutoRetries) attempts"
             error = msg
             onError?(msg)
+            NotificationService.shared.sendCriticalNotification(
+                title: "Claude Process Died",
+                body: msg
+            )
             return
         }
 
+        processHealth = .retrying
         let attempt = autoRetryAttempt
         let delay = Self.retryBaseDelaySeconds * pow(2.0, Double(attempt - 1)) // 1s, 2s, 4s
         let retryMsg = "Retrying... attempt \(attempt)/\(Self.maxAutoRetries)"

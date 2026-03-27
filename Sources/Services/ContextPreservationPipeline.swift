@@ -30,6 +30,10 @@ final class ContextPreservationPipeline: ObservableObject {
     private var pendingReinjection: String?
     private var hasSnapshotted = false
 
+    /// Turn counter since session start — skip compaction detection for first 2 turns
+    /// (session resume naturally causes a token count difference that looks like compaction)
+    private var turnsSinceSessionStart: Int = 0
+
     // MARK: - Debounced Write
 
     private var writeTask: Task<Void, Never>?
@@ -116,11 +120,13 @@ final class ContextPreservationPipeline: ObservableObject {
     /// Called after each turn completes — detects compaction via token drop
     func processTurnMetrics(_ metrics: TurnMetrics) {
         let thisTurnInput = metrics.inputTokens
+        turnsSinceSessionStart += 1
 
-        print("[ContextPipeline] Turn input: \(thisTurnInput) tokens (prev: \(previousTurnInputTokens))")
+        print("[ContextPipeline] Turn \(turnsSinceSessionStart) input: \(thisTurnInput) tokens (prev: \(previousTurnInputTokens))")
 
         // Compaction detection: input drops >50% AND previous was >50K
-        if previousTurnInputTokens > 50_000 && thisTurnInput > 0 {
+        // Skip first 2 turns after session start — token counts are naturally different after resume
+        if turnsSinceSessionStart > 2 && previousTurnInputTokens > 50_000 && thisTurnInput > 0 {
             let dropRatio = Double(thisTurnInput) / Double(previousTurnInputTokens)
             if dropRatio < 0.5 {
                 compactionDetected = true
@@ -194,6 +200,7 @@ final class ContextPreservationPipeline: ObservableObject {
         previousTurnInputTokens = 0
         pendingReinjection = nil
         hasSnapshotted = false
+        turnsSinceSessionStart = 0
         writeTask?.cancel()
         writeTask = nil
     }

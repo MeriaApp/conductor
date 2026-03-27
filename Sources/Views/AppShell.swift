@@ -59,6 +59,8 @@ struct AppShell: View {
     @State private var lastSentPinnedIds: Set<String> = []
     /// Empty response warning — possible context loss
     @State private var showEmptyResponseWarning = false
+    /// Persistent process error — does NOT auto-dismiss (process death, unrecoverable errors)
+    @State private var persistentErrorMessage: String?
     /// Compaction toast — shows briefly when context is compacted
     @State private var compactionToastMessage: String?
     /// Session handoff toast — shows when resuming from a previous session
@@ -165,6 +167,25 @@ struct AppShell: View {
                                 .padding(.top, 8)
                                 .transition(.move(edge: .top).combined(with: .opacity))
                                 .animation(.easeOut(duration: 0.3), value: handoffToastMessage)
+                        }
+
+                        // Persistent process error — does NOT auto-dismiss
+                        if let errorMsg = persistentErrorMessage {
+                            ProcessErrorBanner(
+                                message: errorMsg,
+                                onRestart: {
+                                    persistentErrorMessage = nil
+                                    startNewSession()
+                                },
+                                onDismiss: {
+                                    withAnimation(.easeOut(duration: 0.3)) {
+                                        persistentErrorMessage = nil
+                                    }
+                                }
+                            )
+                            .padding(.top, 8)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                            .animation(.easeOut(duration: 0.3), value: persistentErrorMessage)
                         }
                     }
 
@@ -1073,13 +1094,12 @@ struct AppShell: View {
             }
         }
 
-        process.onError = { msg in
-            // Only notify for non-retry errors
+        process.onError = { [self] msg in
+            // Non-retry errors get a persistent banner (not auto-dismissing toast)
             if !msg.hasPrefix("Retrying") && !msg.hasPrefix("Reconnecting") {
-                NotificationService.shared.sendCompletionNotification(
-                    title: "Error",
-                    body: msg
-                )
+                withAnimation(.easeOut(duration: 0.3)) {
+                    self.persistentErrorMessage = msg
+                }
             }
         }
 

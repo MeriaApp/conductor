@@ -41,9 +41,7 @@ struct StatusBar: View {
     private var vibeCoderStatusBar: some View {
         Group {
             HStack(spacing: 4) {
-                Circle()
-                    .fill(process.isRunning ? theme.sage : theme.muted)
-                    .frame(width: 6, height: 6)
+                processHealthDot
 
                 Text("Claude Code")
                     .font(Typography.statusBar)
@@ -196,6 +194,36 @@ struct StatusBar: View {
             .opacity(0.3)
     }
 
+    // MARK: - Process Health
+
+    @ViewBuilder
+    private var processHealthDot: some View {
+        switch process.processHealth {
+        case .healthy:
+            Circle()
+                .fill(theme.sage)
+                .frame(width: 6, height: 6)
+        case .retrying:
+            Circle()
+                .fill(theme.sand)
+                .frame(width: 6, height: 6)
+                .overlay(
+                    Circle()
+                        .stroke(theme.sand.opacity(0.4), lineWidth: 2)
+                        .scaleEffect(1.5)
+                        .opacity(0.6)
+                )
+        case .dead:
+            Circle()
+                .fill(theme.rose)
+                .frame(width: 6, height: 6)
+        case .stopped:
+            Circle()
+                .fill(theme.muted)
+                .frame(width: 6, height: 6)
+        }
+    }
+
     // MARK: - Model
 
     private var modelIndicator: some View {
@@ -226,9 +254,7 @@ struct StatusBar: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Circle()
-                    .fill(process.isRunning ? theme.sage : theme.muted)
-                    .frame(width: 6, height: 6)
+                processHealthDot
 
                 Text(modelDisplayName)
                     .font(Typography.statusBar)

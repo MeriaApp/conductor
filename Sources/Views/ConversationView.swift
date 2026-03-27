@@ -827,3 +827,57 @@ struct CompactionToast: View {
         .shadow(color: .black.opacity(0.2), radius: 6, y: 2)
     }
 }
+
+// MARK: - Process Error Banner
+
+/// Persistent error banner — does NOT auto-dismiss. Shown when process dies or retries exhaust.
+struct ProcessErrorBanner: View {
+    let message: String
+    var onRestart: () -> Void
+    var onDismiss: () -> Void
+    @EnvironmentObject private var theme: ThemeEngine
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "bolt.slash.fill")
+                .font(.system(size: 14))
+                .foregroundColor(theme.rose)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Process stopped")
+                    .font(Typography.bodyBold)
+                    .foregroundColor(theme.bright)
+                Text(message)
+                    .font(Typography.caption)
+                    .foregroundColor(theme.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer()
+
+            Button("Restart") { onRestart() }
+                .buttonStyle(.plain)
+                .font(Typography.caption)
+                .foregroundColor(theme.sky)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(theme.sky.opacity(0.15))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+
+            Button { onDismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.muted)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(theme.rose.opacity(0.1))
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(theme.rose.opacity(0.4))
+                .frame(height: 2)
+        }
+    }
+}

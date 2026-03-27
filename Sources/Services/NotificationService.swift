@@ -15,6 +15,7 @@ final class NotificationService: ObservableObject {
     static let denyAction = "DENY_ACTION"
 
     private var hasPermission = false
+    private var permissionChecked = false
 
     /// Callback when a permission is approved/denied via notification action
     var onPermissionAction: ((String, Bool) -> Void)? // (requestId, approved)
@@ -45,6 +46,15 @@ final class NotificationService: ObservableObject {
         center.setNotificationCategories([permissionCategory])
         center.delegate = NotificationDelegate.shared
 
+        // Check current settings immediately — if already authorized from a previous launch,
+        // hasPermission is set before any notifications try to send (fixes the race condition)
+        center.getNotificationSettings { [weak self] settings in
+            Task { @MainActor in
+                self?.hasPermission = settings.authorizationStatus == .authorized
+                self?.permissionChecked = true
+            }
+        }
+
         center.requestAuthorization(options: [.alert, .sound, .badge]) { [weak self] granted, _ in
             Task { @MainActor in
                 self?.hasPermission = granted
@@ -54,6 +64,7 @@ final class NotificationService: ObservableObject {
 
     /// Send a system notification (only when app is not focused)
     func sendNotification(title: String, body: String) {
+        ensurePermissionChecked()
         guard hasPermission else { return }
         guard !NSApp.isActive else { return }
 
@@ -74,6 +85,7 @@ final class NotificationService: ObservableObject {
     /// Send a permission request notification — fires even when app is focused
     /// Includes Approve/Deny action buttons
     func sendPermissionNotification(requestId: String, agentName: String, toolName: String, input: String, riskLevel: RiskLevel) {
+        ensurePermissionChecked()
         guard hasPermission else { return }
 
         let content = UNMutableNotificationContent()
@@ -98,6 +110,7 @@ final class NotificationService: ObservableObject {
 
     /// Send a completion notification (response done, agent finished, etc.)
     func sendCompletionNotification(title: String, body: String) {
+        ensurePermissionChecked()
         guard hasPermission else { return }
         guard !NSApp.isActive else { return }
 
@@ -121,6 +134,39 @@ final class NotificationService: ObservableObject {
         UNUserNotificationCenter.current().removeDeliveredNotifications(
             withIdentifiers: ["perm-\(requestId)"]
         )
+    }
+
+    /// Send a critical notification that shows even when app IS focused (process death, unrecoverable errors)
+    /// Skips hasPermission guard — always attempts to send. If not authorized, system silently drops it.
+    /// This avoids the race where hasPermission is still false from the async auth callback.
+    func sendCriticalNotification(title: String, body: String) {
+
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .defaultCritical
+        content.interruptionLevel = .critical
+        content.threadIdentifier = "critical"
+
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: nil
+        )
+
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    /// Check permission status synchronously — fixes race where hasPermission is still false
+    /// from the async requestAuthorization callback not having fired yet
+    private func ensurePermissionChecked() {
+        guard !permissionChecked else { return }
+        permissionChecked = true
+        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
+            Task { @MainActor in
+                self?.hasPermission = settings.authorizationStatus == .authorized
+            }
+        }
     }
 
     private func truncateInput(_ input: String, maxLength: Int) -> String {
@@ -172,8 +218,10 @@ private class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
     ) {
         let category = notification.request.content.categoryIdentifier
 
-        if category == NotificationService.permissionCategory {
-            // Always show permission notifications (even when app is focused)
+        let threadId = notification.request.content.threadIdentifier
+
+        if category == NotificationService.permissionCategory || threadId == "critical" {
+            // Always show permission + critical notifications (even when app is focused)
             completionHandler([.banner, .sound])
         } else {
             // Other notifications: only show when app is not active
